@@ -1,5 +1,5 @@
 import { useAppStore, useAppData } from '../../store/useAppStore';
-import { aplicarMoraAlCronograma, formatearMonto } from '../../utils/financeUtils';
+import { aplicarMoraAlCronograma, formatearMoneda } from '../../utils/financeUtils';
 import { CuotaCronograma } from '../../types/models';
 import { CreditCard, TrendingUp, AlertTriangle, CheckCircle, Calendar } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -14,6 +14,7 @@ export default function CLDashboard() {
   const fechaActual = getFechaActual();
 
   const cliente = datos.clientes.find((c) => c.id === clienteId);
+  const fm = (v: number) => formatearMoneda(v, cliente?.moneda);
   const tienda = datos.tiendas.find((t) => t.id === cliente?.tiendaId);
 
   const transacciones = datos.transacciones.filter(
@@ -25,7 +26,8 @@ export default function CLDashboard() {
       tx.cronograma as CuotaCronograma[],
       tx.tasaMoratoria,
       tx.tipoTasa,
-      fechaActual
+      fechaActual,
+      tx.capitalizacion ?? 30
     );
     const totalDeuda = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.cuota, 0);
     const totalMora = cronograma.reduce((s, c) => s + c.mora, 0);
@@ -72,19 +74,19 @@ export default function CLDashboard() {
           <div>
             <p className="text-primary-200 text-xs">Límite Total</p>
             <p className="text-2xl font-bold text-money mt-1">
-              S/ {formatearMonto(cliente.limiteCredito)}
+              {fm(cliente.limiteCredito)}
             </p>
           </div>
           <div>
             <p className="text-primary-200 text-xs">Utilizado</p>
             <p className="text-2xl font-bold text-money mt-1">
-              S/ {formatearMonto(totalDeuda)}
+              {fm(totalDeuda)}
             </p>
           </div>
           <div>
             <p className="text-primary-200 text-xs">Disponible</p>
             <p className="text-2xl font-bold text-money mt-1">
-              S/ {formatearMonto(Math.max(0, disponible))}
+              {fm(Math.max(0, disponible))}
             </p>
           </div>
         </div>
@@ -124,7 +126,7 @@ export default function CLDashboard() {
             )}
           </div>
           <p className={`stat-value text-money ${totalMora > 0 ? 'text-danger-700' : 'text-gray-900'}`}>
-            S/ {formatearMonto(totalMora)}
+            {fm(totalMora)}
           </p>
           <p className="stat-sub">{totalMora > 0 ? '⚠️ Tienes cuotas vencidas' : '✅ Al corriente'}</p>
         </div>
@@ -159,10 +161,10 @@ export default function CLDashboard() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-money">S/ {formatearMonto(cuota.cuota)}</p>
+                      <p className="font-semibold text-money">{fm(cuota.cuota)}</p>
                       {cuota.mora > 0 && (
                         <p className="text-xs text-danger-600">
-                          +S/ {formatearMonto(cuota.mora)} mora
+                          +{fm(cuota.mora)} mora
                         </p>
                       )}
                     </div>
