@@ -1,5 +1,5 @@
 import { useAppStore, useAppData } from '../../store/useAppStore';
-import { formatearMonto } from '../../utils/financeUtils';
+import { formatearMoneda, diasEntre } from '../../utils/financeUtils';
 import { useNavigate } from 'react-router-dom';
 import { Users, Package, ShoppingCart, TrendingUp, AlertTriangle, Clock } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -24,17 +24,28 @@ export default function ATDashboard() {
   const conMora = vigentes.filter((tx) =>
     tx.cronograma.some((c) => {
       if (c.estado === 'pagada') return false;
-      return new Date(c.fechaVencimiento) < fechaActual;
+      return diasEntre(fechaActual, parseISO(c.fechaVencimiento)) > 0;
     })
   );
 
-  // Monto total vigente
-  const totalVigente = vigentes.reduce((sum, tx) => {
+  const monedaDe = (tx: (typeof transacciones)[number]) =>
+    tx.moneda ?? datos.clientes.find((c) => c.id === tx.clienteId)?.moneda ?? 'PEN';
+
+  // Monto total vigente, separado por moneda (no se mezclan soles y dólares)
+  const vigentePorMoneda = vigentes.reduce<Record<string, number>>((acc, tx) => {
     const pendiente = tx.cronograma
       .filter((c) => c.estado !== 'pagada')
       .reduce((s, c) => s + c.cuota, 0);
-    return sum + pendiente;
-  }, 0);
+    const m = monedaDe(tx);
+    acc[m] = (acc[m] ?? 0) + pendiente;
+    return acc;
+  }, {});
+  const totalVigenteTexto =
+    Object.keys(vigentePorMoneda).length === 0
+      ? formatearMoneda(0, 'PEN')
+      : Object.entries(vigentePorMoneda)
+          .map(([m, v]) => formatearMoneda(v, m as 'PEN' | 'USD'))
+          .join(' · ');
 
   // Últimas transacciones
   const ultimasTx = transacciones
@@ -76,7 +87,7 @@ export default function ATDashboard() {
             <TrendingUp className="w-4 h-4 text-primary-500" />
           </div>
           <p className="stat-value">{vigentes.length}</p>
-          <p className="stat-sub">S/ {formatearMonto(totalVigente)} total</p>
+          <p className="stat-sub">{totalVigenteTexto} total</p>
         </div>
 
         <div
@@ -162,7 +173,7 @@ export default function ATDashboard() {
                   {ultimasTx.map((tx) => {
                     const cli = datos.clientes.find((c) => c.id === tx.clienteId);
                     const tieneMora = tx.cronograma.some(
-                      (c) => c.estado !== 'pagada' && new Date(c.fechaVencimiento) < fechaActual
+                      (c) => c.estado !== 'pagada' && diasEntre(fechaActual, parseISO(c.fechaVencimiento)) > 0
                     );
                     return (
                       <tr
@@ -178,7 +189,7 @@ export default function ATDashboard() {
                             ? 'Pago único'
                             : `${tx.numeroCuotas} cuotas`}
                         </td>
-                        <td className="text-money">S/ {formatearMonto(tx.montoOriginal)}</td>
+                        <td className="text-money">{formatearMoneda(tx.montoOriginal, monedaDe(tx))}</td>
                         <td>
                           {tx.estado === 'liquidado' ? (
                             <span className="badge-green">Liquidado</span>

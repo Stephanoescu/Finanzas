@@ -13,55 +13,63 @@
 //
 // ============================================================
 
-import type { TipoTasa, CuotaCronograma, ModalidadPago } from '../types/models';
-import { addMonths, differenceInDays, format } from 'date-fns';
+import type { TipoTasa, CuotaCronograma, ModalidadPago, Moneda } from '../types/models';
+import { addMonths, differenceInDays, format, parseISO, startOfDay } from 'date-fns';
+
+/** Formato ISO en hora local (sin zona), estable entre husos horarios. */
+export function aISOLocal(fecha: Date): string {
+  return format(fecha, "yyyy-MM-dd'T'HH:mm:ss");
+}
+
+/** Días calendario exactos entre dos fechas, ignorando la hora del día. */
+export function diasEntre(hasta: Date, desde: Date): number {
+  return differenceInDays(startOfDay(hasta), startOfDay(desde));
+}
 
 // ─────────────────────────────────────────────────────────────
 // 1. CONVERSIÓN DE TASAS
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Calcula la Tasa Efectiva Diaria (TED) a partir de la tasa pactada.
+ * Tasa Efectiva del Período (TEP) para un plazo de `dias` días.
+ * Es la ÚNICA fórmula de conversión de tasas del sistema.
  *
- * Si TNA: TED = TNA / 360
- * Si TEA: TED = (1 + TEA)^(1/360) - 1
+ * TNA: TEP(n) = (1 + TNA/m)^(n/d) − 1, con d = días por período de
+ *      capitalización (1 = diaria, 30 = mensual) y m = 360/d.
+ * TEA: TEP(n) = (1 + TEA)^(n/360) − 1
  *
- * @param tasa    Tasa en decimal (ej: 0.24 para 24%)
- * @param tipo    'TNA' | 'TEA'
+ * @param tasa            Tasa anual en decimal (0.24 = 24%)
+ * @param tipo            'TNA' | 'TEA'
+ * @param dias            Plazo de la tasa resultante, en días
+ * @param capitalizacion  d: días por período de capitalización (solo TNA). Por defecto 30.
  */
-export function calcularTED(tasa: number, tipo: TipoTasa): number {
-  if (tipo === 'TNA') {
-    return tasa / 360;
+export function calcularTEP(
+  tasa: number,
+  tipo: TipoTasa,
+  dias: number,
+  capitalizacion = 30
+): number {
+  if (tipo === 'TEA') {
+    return Math.pow(1 + tasa, dias / 360) - 1;
   }
-  // TEA → TED
-  return Math.pow(1 + tasa, 1 / 360) - 1;
+  const d = capitalizacion > 0 ? capitalizacion : 30;
+  const m = 360 / d;
+  return Math.pow(1 + tasa / m, dias / d) - 1;
 }
 
-/**
- * Calcula la Tasa Efectiva Mensual (TEM) a partir de la tasa pactada.
- *
- * Si TNA: TEM = TNA / 12
- * Si TEA: TEM = (1 + TEA)^(30/360) - 1
- *
- * @param tasa    Tasa en decimal
- * @param tipo    'TNA' | 'TEA'
- */
-export function calcularTEM(tasa: number, tipo: TipoTasa): number {
-  if (tipo === 'TNA') {
-    return tasa / 12;
-  }
-  // TEA → TEM (equivalencia por 30/360)
-  return Math.pow(1 + tasa, 30 / 360) - 1;
+/** Tasa Efectiva Diaria: TEP de 1 día. */
+export function calcularTED(tasa: number, tipo: TipoTasa, capitalizacion = 30): number {
+  return calcularTEP(tasa, tipo, 1, capitalizacion);
 }
 
-/**
- * Convierte cualquier tasa a TEA para referencia o display.
- */
-export function calcularTEA(tasa: number, tipo: TipoTasa): number {
-  if (tipo === 'TEA') return tasa;
-  // TNA → TEA: capitalización mensual de 12 períodos
-  const tem = tasa / 12;
-  return Math.pow(1 + tem, 12) - 1;
+/** Tasa Efectiva Mensual: TEP de 30 días. */
+export function calcularTEM(tasa: number, tipo: TipoTasa, capitalizacion = 30): number {
+  return calcularTEP(tasa, tipo, 30, capitalizacion);
+}
+
+/** Tasa Efectiva Anual: TEP de 360 días. */
+export function calcularTEA(tasa: number, tipo: TipoTasa, capitalizacion = 30): number {
+  return calcularTEP(tasa, tipo, 360, capitalizacion);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -157,18 +165,19 @@ export function calcularCuotaFrancesa(
  * @param capital         Capital efectivo (con gracia capitalizada)
  * @param tem             Tasa Efectiva Mensual
  * @param n               Número de cuotas
- * @param fechaPrimerPago Fecha ISO de la primera cuota
+ * @param fechaPagoCiclo Fecha ISO de pago del ciclo (hasta donde se capitaliza).
+ *                       La cuota k vence en fechaPagoCiclo + k meses.
  */
 export function generarCronograma(
   capital: number,
   tem: number,
   n: number,
-  fechaPrimerPago: string
+  fechaPagoCiclo: string
 ): Omit<CuotaCronograma, 'mora' | 'totalPagar' | 'estado' | 'fechaPago' | 'montoPagado'>[] {
   const cuota = calcularCuotaFrancesa(capital, tem, n);
   const cronograma = [];
   let saldo = capital;
-  const fechaBase = new Date(fechaPrimerPago);
+  const fechaBase = parseISO(fechaPagoCiclo);
 
   for (let i = 1; i <= n; i++) {
     const interesPeriodo = saldo * tem;
@@ -180,7 +189,7 @@ export function generarCronograma(
 
     cronograma.push({
       numeroCuota: i,
-      fechaVencimiento: format(addMonths(fechaBase, i - 1), "yyyy-MM-dd'T'HH:mm:ss"),
+      fechaVencimiento: aISOLocal(addMonths(fechaBase, i)),
       saldoInicial: redondear(saldo),
       interes: redondear(interesPeriodo),
       capital: redondear(capitalReal),
@@ -259,23 +268,25 @@ export function calcularMora(
  * @param tasaMora      Tasa moratoria (decimal, ej: 0.36)
  * @param tipoTasa      'TNA' | 'TEA'
  * @param fechaActual   Fecha actual del sistema (puede ser simulada)
+ * @param capitalizacion Días por período de capitalización (solo TNA)
  */
 export function aplicarMoraAlCronograma(
   cronograma: CuotaCronograma[],
   tasaMora: number,
   tipoTasa: TipoTasa,
-  fechaActual: Date
+  fechaActual: Date,
+  capitalizacion = 30
 ): CuotaCronograma[] {
-  const tedMora = calcularTED(tasaMora, tipoTasa);
+  const tedMora = calcularTED(tasaMora, tipoTasa, capitalizacion);
 
   return cronograma.map((cuota) => {
-    // Solo aplica mora a cuotas pendientes o vencidas no pagadas
+    // Cuota pagada: la mora quedó congelada a la fecha del pago
     if (cuota.estado === 'pagada' || cuota.estado === 'pagada_parcial') {
-      return { ...cuota, totalPagar: cuota.cuota + cuota.mora };
+      return { ...cuota, totalPagar: redondear(cuota.cuota + cuota.mora) };
     }
 
-    const fechaVenc = new Date(cuota.fechaVencimiento);
-    const diasMora = differenceInDays(fechaActual, fechaVenc);
+    const fechaVenc = parseISO(cuota.fechaVencimiento);
+    const diasMora = diasEntre(fechaActual, fechaVenc);
     const mora = diasMora > 0 ? calcularMora(cuota.cuota, tedMora, diasMora) : 0;
     const estado: CuotaCronograma['estado'] =
       diasMora > 0 ? 'vencida' : 'pendiente';
@@ -294,57 +305,115 @@ export function aplicarMoraAlCronograma(
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Determina la PRÓXIMA fecha de corte y fecha de pago,
- * a partir de la fecha de compra y la configuración del cliente.
+ * Determina la fecha de corte y la FECHA DE PAGO DEL CICLO a partir de la
+ * fecha de compra y la configuración del cliente.
  *
  * Regla:
- *   - Si fecha_compra <= dia_corte del mes actual → corte este mes → pago este mes
- *   - Si fecha_compra > dia_corte del mes actual → corte el mes que viene → pago el mes que viene
+ *   - Si día_compra <= día_corte → corte este mes → pago este mes
+ *   - Si día_compra >  día_corte → corte y pago el mes siguiente
+ *   - Si día_pago <= día_corte el pago cae un mes después del corte
  *
- * @param fechaCompra   Fecha de la compra (objeto Date)
- * @param diaCorte      Día del mes de corte (ej: 20)
- * @param diaPago       Día del mes de pago (ej: 26)
+ * La fecha de pago del ciclo es hasta donde se capitaliza la deuda; la
+ * primera cuota vence un mes después de ella.
  */
 export function calcularFechasCorteYPago(
   fechaCompra: Date,
   diaCorte: number,
   diaPago: number
-): { fechaCorte: Date; fechaPrimerPago: Date } {
+): { fechaCorte: Date; fechaPagoCiclo: Date } {
   const año = fechaCompra.getFullYear();
   const mes = fechaCompra.getMonth(); // 0-indexed
   const diaCompra = fechaCompra.getDate();
 
-  let fechaCorte: Date;
-  let fechaPrimerPago: Date;
+  const offset = diaCompra <= diaCorte ? 0 : 1;
+  const fechaCorte = new Date(año, mes + offset, diaCorte);
+  let fechaPagoCiclo = new Date(año, mes + offset, diaPago);
 
-  if (diaCompra <= diaCorte) {
-    // Entra al corte de ESTE mes
-    fechaCorte = new Date(año, mes, diaCorte);
-    fechaPrimerPago = new Date(año, mes, diaPago);
-  } else {
-    // Pasa al corte del MES SIGUIENTE
-    fechaCorte = new Date(año, mes + 1, diaCorte);
-    fechaPrimerPago = new Date(año, mes + 1, diaPago);
-  }
-
-  // Edge case: si diaPago <= diaCorte (ej: pago día 5 y corte día 20),
-  // el pago es en el mes POSTERIOR al corte.
   if (diaPago <= diaCorte) {
-    fechaPrimerPago = addMonths(fechaPrimerPago, 1);
+    fechaPagoCiclo = addMonths(fechaPagoCiclo, 1);
   }
 
-  return { fechaCorte, fechaPrimerPago };
+  return { fechaCorte, fechaPagoCiclo };
 }
 
 /**
- * Calcula los días de gracia entre la fecha de compra y la fecha de primer pago.
- * En este sistema = días exactos entre compra y fechaPrimerPago.
+ * Días de gracia: días calendario exactos entre la fecha de compra y la
+ * fecha de pago del ciclo (se ignora la hora de la compra).
  */
 export function calcularDiasGracia(
   fechaCompra: Date,
-  fechaPrimerPago: Date
+  fechaPagoCiclo: Date
 ): number {
-  return differenceInDays(fechaPrimerPago, fechaCompra);
+  return diasEntre(fechaPagoCiclo, fechaCompra);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 8.b TCEA (Tasa de Costo Efectivo Anual)
+// ─────────────────────────────────────────────────────────────
+
+export interface FlujoCredito {
+  /** Días transcurridos desde la fecha de compra */
+  dias: number;
+  monto: number;
+}
+
+/**
+ * TCEA = (1 + TIRd)^360 − 1, donde TIRd es la tasa diaria que iguala
+ * el desembolso (monto de la compra, día 0) con el valor presente de los
+ * pagos. Se resuelve por bisección.
+ */
+export function calcularTCEA(montoDesembolso: number, flujos: FlujoCredito[]): number {
+  const vp = (r: number) =>
+    flujos.reduce((sum, f) => sum + f.monto / Math.pow(1 + r, f.dias), 0) - montoDesembolso;
+
+  let lo = -0.5;
+  let hi = 1;
+  for (let i = 0; i < 300; i++) {
+    const mid = (lo + hi) / 2;
+    // El valor presente decrece al subir la tasa
+    if (vp(mid) > 0) lo = mid;
+    else hi = mid;
+  }
+  const tirDiaria = (lo + hi) / 2;
+  return Math.pow(1 + tirDiaria, 360) - 1;
+}
+
+/**
+ * TCEA de una transacción ya registrada, usando su cronograma.
+ * Convención del sistema: cada cuota k cae a diasGracia + 30·k días de la compra
+ * (meses de 30 días); el pago único cae a diasGracia.
+ */
+export function calcularTCEATransaccion(
+  montoOriginal: number,
+  diasGracia: number,
+  modalidadPago: ModalidadPago,
+  cronograma: { numeroCuota: number; cuota: number }[]
+): number {
+  const flujos = cronograma.map((c) => ({
+    dias: modalidadPago === 'fin_de_mes' ? diasGracia : diasGracia + 30 * c.numeroCuota,
+    monto: c.cuota,
+  }));
+  return calcularTCEA(montoOriginal, flujos);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 8.c PRELACIÓN DE PAGOS
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Imputa un pago en el orden legal: mora → interés compensatorio → capital.
+ * El capital absorbe el remanente (evita descuadres de centavos).
+ */
+export function aplicarPrelacion(
+  montoPagado: number,
+  mora: number,
+  interes: number
+): { desgloseMora: number; desgloseInteres: number; desgloseCapital: number } {
+  const desgloseMora = redondear(Math.min(montoPagado, mora));
+  const restoInteres = montoPagado - desgloseMora;
+  const desgloseInteres = redondear(Math.min(restoInteres, interes));
+  const desgloseCapital = redondear(Math.max(0, restoInteres - desgloseInteres));
+  return { desgloseMora, desgloseInteres, desgloseCapital };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -354,6 +423,7 @@ export function calcularDiasGracia(
 export interface ParamsTransaccion {
   montoOriginal: number;
   tipoTasa: TipoTasa;
+  capitalizacion?: number;
   tasaInteres: number;
   tasaMoratoria: number;
   modalidadPago: ModalidadPago;
@@ -365,12 +435,16 @@ export interface ParamsTransaccion {
 
 export interface ResultadoTransaccion {
   fechaCorte: string;
-  fechaPrimerPago: string;
+  /** Fecha de pago del ciclo: hasta donde se capitaliza la deuda */
+  fechaPagoCiclo: string;
+  /** Vencimiento real de la 1ra cuota (pagoCiclo + 1 mes; = pagoCiclo en pago único) */
+  fechaPrimeraCuota: string;
   diasGracia: number;
   capitalConGracia: number;
   cuotaMensual: number;
   ted: number;
   tem: number;
+  tcea: number;
   cronograma: Omit<CuotaCronograma, 'mora' | 'totalPagar' | 'estado' | 'fechaPago' | 'montoPagado'>[];
 }
 
@@ -388,49 +462,54 @@ export function construirTransaccion(params: ParamsTransaccion): ResultadoTransa
     diaCorte,
     diaPago,
     fechaCompra,
+    capitalizacion = 30,
   } = params;
 
-  const ted = calcularTED(tasaInteres, tipoTasa);
-  const tem = calcularTEM(tasaInteres, tipoTasa);
+  const ted = calcularTED(tasaInteres, tipoTasa, capitalizacion);
+  const tem = calcularTEM(tasaInteres, tipoTasa, capitalizacion);
 
-  const { fechaCorte, fechaPrimerPago } = calcularFechasCorteYPago(
+  const { fechaCorte, fechaPagoCiclo } = calcularFechasCorteYPago(
     fechaCompra,
     diaCorte,
     diaPago
   );
 
-  const diasGracia = calcularDiasGracia(fechaCompra, fechaPrimerPago);
+  const diasGracia = calcularDiasGracia(fechaCompra, fechaPagoCiclo);
   const capitalConGracia = capitalizarGracia(montoOriginal, ted, diasGracia);
+  const isoPagoCiclo = aISOLocal(fechaPagoCiclo);
 
   let cronograma: ReturnType<typeof generarCronograma>;
-  let cuotaMensual: number;
+  let tcea: number;
 
-  if (modalidadPago === 'fin_de_mes' || numeroCuotas === 1) {
-    cronograma = generarCronogramaFinMes(
-      montoOriginal,
-      ted,
-      diasGracia,
-      fechaPrimerPago.toISOString()
-    );
-    cuotaMensual = cronograma[0].cuota;
+  if (modalidadPago === 'fin_de_mes') {
+    // Pago único: vence en la fecha de pago del ciclo
+    cronograma = generarCronogramaFinMes(montoOriginal, ted, diasGracia, isoPagoCiclo);
+    tcea = calcularTCEA(montoOriginal, [
+      { dias: diasGracia, monto: calcularMontoCompuesto(montoOriginal, ted, diasGracia) },
+    ]);
   } else {
-    cronograma = generarCronograma(
-      capitalConGracia,
-      tem,
-      numeroCuotas,
-      fechaPrimerPago.toISOString()
+    cronograma = generarCronograma(capitalConGracia, tem, numeroCuotas, isoPagoCiclo);
+    // TCEA con flujos sin redondear, meses de 30 días
+    const cuotaExacta = calcularCuotaFrancesa(capitalConGracia, tem, numeroCuotas);
+    tcea = calcularTCEA(
+      montoOriginal,
+      Array.from({ length: numeroCuotas }, (_, i) => ({
+        dias: diasGracia + 30 * (i + 1),
+        monto: cuotaExacta,
+      }))
     );
-    cuotaMensual = cronograma[0].cuota;
   }
 
   return {
-    fechaCorte: fechaCorte.toISOString(),
-    fechaPrimerPago: fechaPrimerPago.toISOString(),
+    fechaCorte: aISOLocal(fechaCorte),
+    fechaPagoCiclo: isoPagoCiclo,
+    fechaPrimeraCuota: cronograma[0].fechaVencimiento,
     diasGracia,
     capitalConGracia: redondear(capitalConGracia),
-    cuotaMensual: redondear(cuotaMensual),
+    cuotaMensual: redondear(cronograma[0].cuota),
     ted,
     tem,
+    tcea,
     cronograma,
   };
 }
@@ -458,11 +537,21 @@ export function formatearMonto(valor: number, locale = 'es-PE'): string {
   }).format(valor);
 }
 
+/** Símbolo de la moneda: PEN → "S/", USD → "US$". */
+export function simboloMoneda(moneda: Moneda | undefined): string {
+  return moneda === 'USD' ? 'US$' : 'S/';
+}
+
+/** Monto con símbolo de moneda y 2 decimales. Ej: "S/ 1,234.50" */
+export function formatearMoneda(valor: number, moneda: Moneda | undefined): string {
+  return `${simboloMoneda(moneda)} ${formatearMonto(valor)}`;
+}
+
 /**
  * Formatea una tasa decimal como porcentaje para display.
- * Ej: 0.24 → "24.00%"
+ * Ej: 0.24 → "24.0000000%" (7 decimales por defecto: TED, TEM, TCEA)
  */
-export function formatearTasa(tasa: number, decimales = 2): string {
+export function formatearTasa(tasa: number, decimales = 7): string {
   return `${(tasa * 100).toFixed(decimales)}%`;
 }
 
@@ -514,15 +603,15 @@ export function evaluarCuotaConMora(
   cuota: CuotaCronograma,
   tasaMora: number,
   tipoTasa: TipoTasa,
-  fechaActual: Date
+  fechaActual: Date,
+  capitalizacion = 30
 ): CuotaCronograma {
   if (cuota.estado === 'pagada') {
-    return { ...cuota, mora: 0, totalPagar: cuota.cuota };
+    return { ...cuota, totalPagar: redondear(cuota.cuota + cuota.mora) };
   }
 
-  const tedMora = calcularTED(tasaMora, tipoTasa);
-  const fechaVenc = new Date(cuota.fechaVencimiento);
-  const diasMora = Math.max(0, differenceInDays(fechaActual, fechaVenc));
+  const tedMora = calcularTED(tasaMora, tipoTasa, capitalizacion);
+  const diasMora = Math.max(0, diasEntre(fechaActual, parseISO(cuota.fechaVencimiento)));
   const mora = calcularMora(cuota.cuota, tedMora, diasMora);
   const estado: CuotaCronograma['estado'] =
     diasMora > 0 ? 'vencida' : 'pendiente';
@@ -533,4 +622,15 @@ export function evaluarCuotaConMora(
     totalPagar: redondear(cuota.cuota + mora),
     estado,
   };
+}
+
+/**
+ * Precio unitario de un producto según la modalidad de pago:
+ * contado para pago único (fin de mes), precio de crédito para cuotas.
+ */
+export function precioSegunModalidad(
+  producto: { precioContado: number; precioCredito: number },
+  modalidad: ModalidadPago
+): number {
+  return modalidad === 'cuotas' ? producto.precioCredito : producto.precioContado;
 }

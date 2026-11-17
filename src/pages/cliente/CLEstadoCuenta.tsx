@@ -1,5 +1,7 @@
 import { useAppStore, useAppData } from '../../store/useAppStore';
-import { aplicarMoraAlCronograma, formatearMonto, calcularTED } from '../../utils/financeUtils';
+import {
+  aplicarMoraAlCronograma, formatearMoneda, formatearTasa, calcularTED, calcularTEM, calcularTCEATransaccion,
+} from '../../utils/financeUtils';
 import { CuotaCronograma } from '../../types/models';
 import { FileText, AlertTriangle, CheckCircle, TrendingUp, Calendar } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -21,20 +23,26 @@ export default function CLEstadoCuenta() {
   const fechaActual = getFechaActual();
 
   const cliente = datos.clientes.find((c) => c.id === clienteId);
+  const fm = (v: number) => formatearMoneda(v, cliente?.moneda);
   const transacciones = datos.transacciones
     .filter((t) => t.clienteId === clienteId)
-    .sort((a, b) => new Date(b.fechaCompra).getTime() - new Date(a.fechaCompra).getTime());
+    .sort((a, b) => new Date(a.fechaCompra).getTime() - new Date(b.fechaCompra).getTime());
 
   const transaccionesConMora = transacciones.map((tx) => {
     const cronograma = aplicarMoraAlCronograma(
       tx.cronograma as CuotaCronograma[],
       tx.tasaMoratoria,
       tx.tipoTasa,
-      fechaActual
+      fechaActual,
+      tx.capitalizacion ?? 30
     );
-    const totalDeuda = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.cuota, 0);
-    const totalMora = cronograma.reduce((s, c) => s + c.mora, 0);
-    return { tx, cronograma, totalDeuda, totalMora };
+    const pendientes = cronograma.filter((c) => c.estado !== 'pagada');
+    const totalDeuda = pendientes.reduce((s, c) => s + c.cuota, 0);
+    const totalInteres = pendientes.reduce((s, c) => s + c.interes, 0);
+    // Solo la mora de cuotas impagas: la mora de una cuota ya pagada quedó saldada en su pago
+    const totalMora = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.mora, 0);
+    const tcea = tx.tcea ?? calcularTCEATransaccion(tx.montoOriginal, tx.diasGracia, tx.modalidadPago, tx.cronograma);
+    return { tx, cronograma, totalDeuda, totalMora, totalInteres, tcea };
   });
 
   const totalDeudaGlobal = transaccionesConMora.reduce((s, t) => s + t.totalDeuda, 0);
@@ -57,18 +65,18 @@ export default function CLEstadoCuenta() {
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="stat-card">
           <p className="stat-label">Deuda Total</p>
-          <p className="stat-value text-money">S/ {formatearMonto(totalDeudaGlobal)}</p>
+          <p className="stat-value text-money">{fm(totalDeudaGlobal)}</p>
         </div>
         <div className={`stat-card ${totalMoraGlobal > 0 ? 'border-danger-300 bg-danger-50' : ''}`}>
           <p className="stat-label">Mora Acumulada</p>
           <p className={`stat-value text-money ${totalMoraGlobal > 0 ? 'text-danger-700' : 'text-gray-400'}`}>
-            S/ {formatearMonto(totalMoraGlobal)}
+            {fm(totalMoraGlobal)}
           </p>
         </div>
         <div className="stat-card">
           <p className="stat-label">Total a Pagar</p>
           <p className="stat-value text-money text-primary-700">
-            S/ {formatearMonto(totalDeudaGlobal + totalMoraGlobal)}
+            {fm(totalDeudaGlobal + totalMoraGlobal)}
           </p>
         </div>
       </div>
@@ -80,7 +88,7 @@ export default function CLEstadoCuenta() {
         </div>
       ) : (
         <div className="space-y-6">
-          {transaccionesConMora.map(({ tx, cronograma, totalDeuda, totalMora }) => (
+          {transaccionesConMora.map(({ tx, cronograma, totalDeuda, totalMora, totalInteres, tcea }) => (
             <div key={tx.id} className="card overflow-hidden">
               {/* Encabezado de crédito */}
               <div className="card-header bg-gray-50">
@@ -125,17 +133,33 @@ export default function CLEstadoCuenta() {
                     {tx.items.map((item, i) => (
                       <div key={i} className="flex justify-between">
                         <span className="text-gray-700">{item.cantidad}x {item.descripcion}</span>
-                        <span className="text-money text-gray-800">S/ {formatearMonto(item.subtotal)}</span>
+                        <span className="text-money text-gray-800">{fm(item.subtotal)}</span>
                       </div>
                     ))}
                     <div className="border-t pt-1 flex justify-between font-semibold">
                       <span>Subtotal</span>
-                      <span className="text-money">S/ {formatearMonto(tx.montoOriginal)}</span>
+                      <span className="text-money">{fm(tx.montoOriginal)}</span>
                     </div>
                     <div className="flex justify-between text-xs text-gray-500">
                       <span>Capital con gracia ({tx.diasGracia}d)</span>
-                      <span className="text-money">S/ {formatearMonto(tx.capitalConGracia)}</span>
+                      <span className="text-money">{fm(tx.capitalConGracia)}</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Transparencia de tasas */}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-gray-500">TED</p>
+                    <p className="font-mono">{formatearTasa(calcularTED(tx.tasaInteres, tx.tipoTasa, tx.capitalizacion ?? 30))}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-gray-500">TEM</p>
+                    <p className="font-mono">{formatearTasa(calcularTEM(tx.tasaInteres, tx.tipoTasa, tx.capitalizacion ?? 30))}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-gray-500">TCEA</p>
+                    <p className="font-mono">{formatearTasa(tcea)}</p>
                   </div>
                 </div>
 
@@ -163,18 +187,30 @@ export default function CLEstadoCuenta() {
                           <tr key={c.numeroCuota} className={c.estado === 'vencida' ? 'bg-danger-50' : ''}>
                             <td className="font-medium">{c.numeroCuota}</td>
                             <td>{format(parseISO(c.fechaVencimiento), 'dd/MM/yyyy')}</td>
-                            <td className="text-money">S/ {formatearMonto(c.capital)}</td>
-                            <td className="text-money">S/ {formatearMonto(c.interes)}</td>
-                            <td className="text-money font-semibold">S/ {formatearMonto(c.cuota)}</td>
+                            <td className="text-money">{fm(c.capital)}</td>
+                            <td className="text-money">{fm(c.interes)}</td>
+                            <td className="text-money font-semibold">{fm(c.cuota)}</td>
                             <td className={`text-money ${c.mora > 0 ? 'text-danger-600 font-semibold' : 'text-gray-400'}`}>
-                              {c.mora > 0 ? `S/ ${formatearMonto(c.mora)}` : '—'}
+                              {c.mora > 0 ? fm(c.mora) : '—'}
                             </td>
-                            <td className="text-money font-bold">S/ {formatearMonto(c.totalPagar)}</td>
+                            <td className="text-money font-bold">{fm(c.totalPagar)}</td>
                             <td><EstadoBadge estado={c.estado} /></td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+
+                {/* Interés compensatorio e intereses por mora, por separado */}
+                <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span>Interés compensatorio pendiente</span>
+                    <span className="text-money">{fm(totalInteres)}</span>
+                  </div>
+                  <div className="flex justify-between text-danger-600">
+                    <span>Intereses por mora</span>
+                    <span className="text-money">{fm(totalMora)}</span>
                   </div>
                 </div>
 
@@ -186,7 +222,7 @@ export default function CLEstadoCuenta() {
                       Intereses por Mora
                     </div>
                     <p className="text-sm text-danger-600">
-                      Total mora: <strong className="text-money">S/ {formatearMonto(totalMora)}</strong>
+                      Total mora: <strong className="text-money">{fm(totalMora)}</strong>
                     </p>
                     <p className="text-xs text-danger-500 mt-1">
                       Tasa moratoria: {(tx.tasaMoratoria * 100).toFixed(2)}% {tx.tipoTasa}
@@ -198,18 +234,18 @@ export default function CLEstadoCuenta() {
                 <div className="bg-primary-50 rounded-lg p-3 flex justify-between items-center">
                   <div className="text-sm">
                     <span className="text-gray-600">Deuda pendiente:</span>
-                    <span className="font-semibold text-money ml-2">S/ {formatearMonto(totalDeuda)}</span>
+                    <span className="font-semibold text-money ml-2">{fm(totalDeuda)}</span>
                     {totalMora > 0 && (
                       <>
                         <span className="text-gray-400 mx-2">+</span>
-                        <span className="text-danger-600 font-semibold text-money">S/ {formatearMonto(totalMora)} mora</span>
+                        <span className="text-danger-600 font-semibold text-money">{fm(totalMora)} mora</span>
                       </>
                     )}
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-500">Total a pagar</p>
                     <p className="font-bold text-lg text-money text-primary-700">
-                      S/ {formatearMonto(totalDeuda + totalMora)}
+                      {fm(totalDeuda + totalMora)}
                     </p>
                   </div>
                 </div>
