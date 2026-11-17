@@ -3,6 +3,7 @@ import { Plus, Edit2, Trash2, X, Store } from 'lucide-react';
 import { useAppStore, useAppData } from '../../store/useAppStore';
 import { storageTiendas, storageUsuarios, generarId } from '../../utils/storage';
 import { Tienda, Usuario } from '../../types/models';
+import HelpTip from '../../components/HelpTip';
 
 const SATiendas: React.FC = () => {
   const { refrescarDatos } = useAppStore();
@@ -16,6 +17,7 @@ const SATiendas: React.FC = () => {
   const [giro, setGiro] = useState('');
   const [direccion, setDireccion] = useState('');
   const [telefono, setTelefono] = useState('');
+  const [tasaMaxBCRP, setTasaMaxBCRP] = useState('');
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminNombreCompleto, setAdminNombreCompleto] = useState('');
@@ -25,6 +27,7 @@ const SATiendas: React.FC = () => {
     setGiro('');
     setDireccion('');
     setTelefono('');
+    setTasaMaxBCRP('');
     setAdminUsername('');
     setAdminPassword('');
     setAdminNombreCompleto('');
@@ -39,6 +42,7 @@ const SATiendas: React.FC = () => {
       setGiro(tienda.giro);
       setDireccion(tienda.direccion || '');
       setTelefono(tienda.telefono || '');
+      setTasaMaxBCRP(tienda.tasaMaxBCRP !== undefined ? String(+(tienda.tasaMaxBCRP * 100).toFixed(6)) : '');
       
       const admin = usuarios.find((u: Usuario) => u.id === tienda.adminId);
       if (admin) {
@@ -58,6 +62,7 @@ const SATiendas: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const ahora = new Date().toISOString();
+    const tope = tasaMaxBCRP.trim() === '' ? undefined : parseFloat(tasaMaxBCRP) / 100;
     
     if (editingTienda) {
       // Update existing tienda
@@ -67,6 +72,7 @@ const SATiendas: React.FC = () => {
         giro,
         direccion,
         telefono,
+        tasaMaxBCRP: tope,
       };
       
       storageTiendas.guardar(updatedTienda);
@@ -105,6 +111,7 @@ const SATiendas: React.FC = () => {
         giro,
         direccion,
         telefono,
+        tasaMaxBCRP: tope,
         adminId: adminId,
         activa: true,
         creadaEn: ahora,
@@ -233,7 +240,7 @@ const SATiendas: React.FC = () => {
                 <h3 className="text-lg font-medium text-gray-900 border-b pb-2 mb-4">Datos de la Tienda</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Nombre de la Tienda</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Nombre de la Tienda<HelpTip text="Nombre comercial del negocio. Aparece en el panel del cliente. No afecta el cálculo." /></label>
                     <input 
                       type="text" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
@@ -243,7 +250,7 @@ const SATiendas: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Giro (Ej. Bodega, Carnicería)</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Giro (Ej. Bodega, Carnicería)<HelpTip text="Rubro del negocio (bodega, carnicería, peluquería…). Es solo informativo." /></label>
                     <input 
                       type="text" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
@@ -253,7 +260,7 @@ const SATiendas: React.FC = () => {
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Dirección (Opcional)</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Dirección (Opcional)<HelpTip text="Dirección del local. Es solo informativo." /></label>
                     <input 
                       type="text" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
@@ -262,12 +269,23 @@ const SATiendas: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Teléfono (Opcional)</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Teléfono (Opcional)<HelpTip text="Teléfono de contacto de la tienda. Es solo informativo." /></label>
                     <input 
                       type="tel" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
                       value={telefono} 
                       onChange={(e) => setTelefono(e.target.value)} 
+                    />
+                  </div>
+                  <div>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Tasa máxima BCRP (TEA %)<HelpTip text="Tope legal de tasas, en TEA porcentual (ej. 90 = 90 %). Las tasas compensatoria y moratoria de los clientes de esta tienda, expresadas en TEA, no pueden superarlo. Déjelo vacío para no aplicar tope." /></label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="input w-full border border-gray-300 rounded-md px-3 py-2"
+                      value={tasaMaxBCRP}
+                      onChange={(e) => setTasaMaxBCRP(e.target.value)}
                     />
                   </div>
                 </div>
@@ -277,7 +295,7 @@ const SATiendas: React.FC = () => {
                 <h3 className="text-lg font-medium text-gray-900 border-b pb-2 mb-4">Administrador de la Tienda</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Nombre Completo del Admin</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Nombre Completo del Admin<HelpTip text="Nombre de la persona que administra la tienda. Es solo informativo." /></label>
                     <input 
                       type="text" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
@@ -287,7 +305,7 @@ const SATiendas: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="label block text-sm font-medium text-gray-700 mb-1">Usuario de Acceso</label>
+                    <label className="label block text-sm font-medium text-gray-700 mb-1">Usuario de Acceso<HelpTip text="Usuario con el que el administrador inicia sesión. Debe ser único." /></label>
                     <input 
                       type="text" 
                       className="input w-full border border-gray-300 rounded-md px-3 py-2" 
@@ -298,7 +316,7 @@ const SATiendas: React.FC = () => {
                   </div>
                   <div>
                     <label className="label block text-sm font-medium text-gray-700 mb-1">
-                      Contraseña {editingTienda && <span className="text-xs font-normal text-gray-500">(Opcional)</span>}
+                      Contraseña {editingTienda && <span className="text-xs font-normal text-gray-500">(Opcional)</span>}<HelpTip text="Clave de acceso del administrador. Al editar, déjela vacía para conservar la actual." />
                     </label>
                     <input 
                       type="password" 
