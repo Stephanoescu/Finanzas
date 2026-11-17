@@ -1,13 +1,18 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppStore, useAppData } from '../../store/useAppStore';
-import { storageTransacciones } from '../../utils/storage';
+import { storageTransacciones, storagePagos, generarId } from '../../utils/storage';
 import {
   aplicarMoraAlCronograma,
-  formatearMonto,
+  aplicarPrelacion,
   calcularTED,
+  calcularTEM,
+  calcularTCEATransaccion,
+  formatearMoneda,
+  formatearTasa,
+  redondear,
 } from '../../utils/financeUtils';
-import { CuotaCronograma, Transaccion } from '../../types/models';
+import { CuotaCronograma, Transaccion, Pago } from '../../types/models';
 import {
   FileText, AlertTriangle, CheckCircle, Clock,
   ChevronDown, ChevronUp, User, Calendar, TrendingUp
@@ -44,11 +49,13 @@ export default function ATEstadoCuenta() {
 
   const cliente = clientes.find((c) => c.id === clienteSelId);
   const fechaActual = getFechaActual();
+  const moneda = cliente?.moneda ?? 'PEN';
+  const fm = (v: number) => formatearMoneda(v, moneda);
 
   // Transacciones del cliente
   const transacciones = datos.transacciones
     .filter((t) => t.clienteId === clienteSelId && t.tiendaId === tiendaId)
-    .sort((a, b) => new Date(b.fechaCompra).getTime() - new Date(a.fechaCompra).getTime());
+    .sort((a, b) => new Date(a.fechaCompra).getTime() - new Date(b.fechaCompra).getTime());
 
   // Calcular cronogramas con mora actualizada
   const transaccionesConMora = transacciones.map((tx) => {
@@ -56,7 +63,8 @@ export default function ATEstadoCuenta() {
       tx.cronograma as CuotaCronograma[],
       tx.tasaMoratoria,
       tx.tipoTasa,
-      fechaActual
+      fechaActual,
+      tx.capitalizacion ?? 30
     );
 
     const hayMora = cronogramaActualizado.some((c) => c.estado === 'vencida' && c.mora > 0);
@@ -64,8 +72,14 @@ export default function ATEstadoCuenta() {
       .filter((c) => c.estado !== 'pagada')
       .reduce((s, c) => s + c.cuota, 0);
     const totalMora = cronogramaActualizado.reduce((s, c) => s + c.mora, 0);
+    const pendientes = cronogramaActualizado.filter((c) => c.estado !== 'pagada');
+    const totalCapital = pendientes.reduce((s, c) => s + c.capital, 0);
+    const totalInteres = pendientes.reduce((s, c) => s + c.interes, 0);
+    const tcea = tx.tcea ?? calcularTCEATransaccion(
+      tx.montoOriginal, tx.diasGracia, tx.modalidadPago, tx.cronograma
+    );
 
-    return { tx, cronograma: cronogramaActualizado, hayMora, totalDeuda, totalMora };
+    return { tx, cronograma: cronogramaActualizado, hayMora, totalDeuda, totalMora, totalCapital, totalInteres, tcea };
   });
 
   // Totales globales
@@ -73,6 +87,11 @@ export default function ATEstadoCuenta() {
     .filter(({ tx }) => tx.estado !== 'liquidado' && tx.estado !== 'castigado')
     .reduce((s, { totalDeuda }) => s + totalDeuda, 0);
   const totalMoraGlobal = transaccionesConMora.reduce((s, { totalMora }) => s + totalMora, 0);
+  const activas = transaccionesConMora.filter(
+    ({ tx }) => tx.estado !== 'liquidado' && tx.estado !== 'castigado'
+  );
+  const totalCapitalGlobal = activas.reduce((s, t) => s + t.totalCapital, 0);
+  const totalInteresGlobal = activas.reduce((s, t) => s + t.totalInteres, 0);
   const lineaDisponible = cliente
     ? cliente.limiteCredito - totalDeudaGlobal
     : 0;
@@ -83,14 +102,42 @@ export default function ATEstadoCuenta() {
     );
   };
 
-  // Marcar cuota como pagada
-  const marcarPagada = (txId: string, numCuota: number) => {
+  // Pagar una cuota COMPLETA (cuota + mora a la fecha). No se admiten pagos parciales.
+  const pagarCuota = (txId: string, numCuota: number) => {
     const tx = transacciones.find((t) => t.id === txId);
-    if (!tx) return;
+    const evaluada = transaccionesConMora
+      .find((t) => t.tx.id === txId)
+      ?.cronograma.find((c) => c.numeroCuota === numCuota);
+    if (!tx || !evaluada || evaluada.estado === 'pagada' || !cliente) return;
 
+    const mora = evaluada.mora;
+    const montoPagado = redondear(evaluada.cuota + mora);
+    if (!window.confirm(
+      `Se registrará el pago COMPLETO de la cuota ${numCuota}: ${fm(montoPagado)} ` +
+      `(cuota ${fm(evaluada.cuota)} + mora ${fm(mora)}). No se admiten pagos parciales. ¿Continuar?`
+    )) return;
+
+    const fechaPago = fechaActual.toISOString();
+    const desglose = aplicarPrelacion(montoPagado, mora, evaluada.interes);
+
+    const pago: Pago = {
+      id: generarId('pago'),
+      tiendaId,
+      clienteId: tx.clienteId,
+      transaccionId: tx.id,
+      numeroCuota: numCuota,
+      fechaPago,
+      montoPagado,
+      ...desglose,
+      registradoPor: sesion?.userId ?? '',
+      creadoEn: fechaPago,
+    };
+    storagePagos.guardar(pago);
+
+    // La mora queda congelada a la fecha del pago
     const cronograma = tx.cronograma.map((c) =>
       c.numeroCuota === numCuota
-        ? { ...c, estado: 'pagada' as const, fechaPago: fechaActual.toISOString() }
+        ? { ...c, estado: 'pagada' as const, mora, totalPagar: montoPagado, montoPagado, fechaPago }
         : c
     );
 
@@ -144,23 +191,43 @@ export default function ATEstadoCuenta() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="stat-card">
               <p className="stat-label">Línea de Crédito</p>
-              <p className="stat-value text-money">S/ {formatearMonto(cliente.limiteCredito)}</p>
+              <p className="stat-value text-money">{fm(cliente.limiteCredito)}</p>
             </div>
             <div className="stat-card">
               <p className="stat-label">Deuda Total</p>
-              <p className="stat-value text-money text-danger-700">S/ {formatearMonto(totalDeudaGlobal)}</p>
+              <p className="stat-value text-money text-danger-700">{fm(totalDeudaGlobal)}</p>
             </div>
             <div className="stat-card">
               <p className="stat-label">Mora Acumulada</p>
               <p className={`stat-value text-money ${totalMoraGlobal > 0 ? 'text-danger-500' : 'text-gray-400'}`}>
-                S/ {formatearMonto(totalMoraGlobal)}
+                {fm(totalMoraGlobal)}
               </p>
             </div>
             <div className="stat-card">
               <p className="stat-label">Línea Disponible</p>
               <p className={`stat-value text-money ${lineaDisponible < 0 ? 'text-danger-700' : 'text-success-700'}`}>
-                S/ {formatearMonto(Math.max(0, lineaDisponible))}
+                {fm(Math.max(0, lineaDisponible))}
               </p>
+            </div>
+          </div>
+
+          {/* Resumen: compras en orden cronológico, interés compensatorio e intereses por mora separados */}
+          <div className="card p-4 text-sm space-y-1">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Capital pendiente</span>
+              <span className="text-money">{fm(totalCapitalGlobal)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Interés compensatorio</span>
+              <span className="text-money">{fm(totalInteresGlobal)}</span>
+            </div>
+            <div className="flex justify-between text-danger-600">
+              <span>Intereses por mora</span>
+              <span className="text-money">{fm(totalMoraGlobal)}</span>
+            </div>
+            <div className="flex justify-between border-t pt-1 font-semibold">
+              <span>Total a pagar</span>
+              <span className="text-money">{fm(totalDeudaGlobal + totalMoraGlobal)}</span>
             </div>
           </div>
 
@@ -196,7 +263,7 @@ export default function ATEstadoCuenta() {
             </div>
           ) : (
             <div className="space-y-4">
-              {transaccionesConMora.map(({ tx, cronograma, hayMora, totalDeuda, totalMora }) => (
+              {transaccionesConMora.map(({ tx, cronograma, hayMora, totalDeuda, totalMora, totalCapital, totalInteres, tcea }) => (
                 <div key={tx.id} className="card overflow-hidden">
                   {/* Header de transacción */}
                   <div
@@ -235,13 +302,13 @@ export default function ATEstadoCuenta() {
                     <div className="flex items-center gap-6 text-right">
                       <div>
                         <p className="text-xs text-gray-500">Deuda</p>
-                        <p className="font-semibold text-money">S/ {formatearMonto(totalDeuda)}</p>
+                        <p className="font-semibold text-money">{fm(totalDeuda)}</p>
                       </div>
                       {totalMora > 0 && (
                         <div>
                           <p className="text-xs text-danger-500">Mora</p>
                           <p className="font-semibold text-money text-danger-600">
-                            S/ {formatearMonto(totalMora)}
+                            {fm(totalMora)}
                           </p>
                         </div>
                       )}
@@ -267,17 +334,55 @@ export default function ATEstadoCuenta() {
                               <span>
                                 {item.cantidad}x {item.descripcion}
                               </span>
-                              <span className="text-money">S/ {formatearMonto(item.subtotal)}</span>
+                              <span className="text-money">{fm(item.subtotal)}</span>
                             </div>
                           ))}
                           <div className="border-t pt-1 flex justify-between font-semibold text-sm">
                             <span>Total Compra</span>
-                            <span className="text-money">S/ {formatearMonto(tx.montoOriginal)}</span>
+                            <span className="text-money">{fm(tx.montoOriginal)}</span>
                           </div>
                           <div className="flex justify-between text-xs text-gray-500">
                             <span>Capital capitalizado ({tx.diasGracia} días gracia)</span>
-                            <span className="text-money">S/ {formatearMonto(tx.capitalConGracia)}</span>
+                            <span className="text-money">{fm(tx.capitalConGracia)}</span>
                           </div>
+                        </div>
+                      </div>
+
+                      {/* Transparencia de tasas */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-500">TED</p>
+                          <p className="font-mono">{formatearTasa(calcularTED(tx.tasaInteres, tx.tipoTasa, tx.capitalizacion ?? 30))}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-500">TEM</p>
+                          <p className="font-mono">{formatearTasa(calcularTEM(tx.tasaInteres, tx.tipoTasa, tx.capitalizacion ?? 30))}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-500">TCEA</p>
+                          <p className="font-mono">{formatearTasa(tcea)}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded p-2">
+                          <p className="text-gray-500">Pago del ciclo / 1ra cuota</p>
+                          <p className="font-mono">
+                            {format(parseISO(tx.fechaPagoCiclo), 'dd/MM/yyyy')} / {format(parseISO(tx.fechaPrimeraCuota), 'dd/MM/yyyy')}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Desglose de la deuda: interés compensatorio y mora por separado */}
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span>Capital pendiente</span>
+                          <span className="text-money">{fm(totalCapital)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Interés compensatorio</span>
+                          <span className="text-money">{fm(totalInteres)}</span>
+                        </div>
+                        <div className="flex justify-between text-danger-600">
+                          <span>Intereses por mora</span>
+                          <span className="text-money">{fm(totalMora)}</span>
                         </div>
                       </div>
 
@@ -312,24 +417,25 @@ export default function ATEstadoCuenta() {
                                   <td>
                                     {format(parseISO(cuota.fechaVencimiento), 'dd/MM/yyyy')}
                                   </td>
-                                  <td className="text-money">S/ {formatearMonto(cuota.saldoInicial)}</td>
-                                  <td className="text-money">S/ {formatearMonto(cuota.capital)}</td>
-                                  <td className="text-money">S/ {formatearMonto(cuota.interes)}</td>
+                                  <td className="text-money">{fm(cuota.saldoInicial)}</td>
+                                  <td className="text-money">{fm(cuota.capital)}</td>
+                                  <td className="text-money">{fm(cuota.interes)}</td>
                                   <td className="text-money font-semibold">
-                                    S/ {formatearMonto(cuota.cuota)}
+                                    {fm(cuota.cuota)}
                                   </td>
                                   <td className={`text-money ${cuota.mora > 0 ? 'text-danger-600 font-semibold' : 'text-gray-400'}`}>
-                                    {cuota.mora > 0 ? `S/ ${formatearMonto(cuota.mora)}` : '—'}
+                                    {cuota.mora > 0 ? fm(cuota.mora) : '—'}
                                   </td>
                                   <td className="text-money font-bold text-gray-900">
-                                    S/ {formatearMonto(cuota.totalPagar)}
+                                    {fm(cuota.totalPagar)}
                                   </td>
                                   <td><EstadoBadge estado={cuota.estado} /></td>
                                   <td>
                                     {cuota.estado !== 'pagada' && (
                                       <button
-                                        onClick={() => marcarPagada(tx.id, cuota.numeroCuota)}
+                                        onClick={() => pagarCuota(tx.id, cuota.numeroCuota)}
                                         className="btn-primary btn-sm text-xs px-2 py-1"
+                                        title="Se paga la cuota completa (cuota + mora)"
                                       >
                                         Pagar
                                       </button>
@@ -351,11 +457,11 @@ export default function ATEstadoCuenta() {
                           </div>
                           <p className="text-sm text-danger-600">
                             Mora acumulada a la fecha:{' '}
-                            <span className="font-bold text-money">S/ {formatearMonto(totalMora)}</span>
+                            <span className="font-bold text-money">{fm(totalMora)}</span>
                           </p>
                           <p className="text-xs text-danger-500 mt-1">
                             Tasa moratoria: {(tx.tasaMoratoria * 100).toFixed(2)}% {tx.tipoTasa} —
-                            TED mora: {(calcularTED(tx.tasaMoratoria, tx.tipoTasa) * 100).toFixed(6)}%
+                            TED mora: {formatearTasa(calcularTED(tx.tasaMoratoria, tx.tipoTasa, tx.capitalizacion ?? 30))}
                           </p>
                         </div>
                       )}
