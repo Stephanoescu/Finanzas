@@ -623,3 +623,14 @@ export function evaluarCuotaConMora(
     estado,
   };
 }
+
+/**
+ * Precio unitario de un producto según la modalidad de pago:
+ * contado para pago único (fin de mes), precio de crédito para cuotas.
+ */
+export function precioSegunModalidad(
+  producto: { precioContado: number; precioCredito: number },
+  modalidad: ModalidadPago
+): number {
+  return modalidad === 'cuotas' ? producto.precioCredito : producto.precioContado;
+}

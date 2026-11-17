@@ -7,6 +7,7 @@ import {
   validarLimiteCredito,
   formatearMoneda,
   formatearTasa,
+  precioSegunModalidad,
 } from '../../utils/financeUtils';
 import HelpTip from '../../components/HelpTip';
 import {
@@ -66,24 +67,55 @@ export default function ATPuntoVenta() {
       } cuotas. Quítelo(s) del carrito o use pago único.`
     : '';
 
+  /** Precio unitario según modalidad: contado para pago único, crédito para cuotas. */
+  const precioPara = (productoId: string, m: ModalidadPago, fallback: number) => {
+    const p = productos.find((x) => x.id === productoId);
+    if (!p) return fallback;
+    return precioSegunModalidad(p, m);
+  };
+
+  /** Recalcula precios y subtotales del carrito para la modalidad indicada. */
+  const repreciar = (items: CarritoItem[], m: ModalidadPago): CarritoItem[] =>
+    items.map((i) => {
+      const precio = precioPara(i.productoId, m, i.precioUnitario);
+      return { ...i, precioUnitario: precio, subtotal: precio * i.cantidad };
+    });
+
+  const cambiarModalidad = (m: ModalidadPago) => {
+    setModalidadPago(m);
+    if (m === 'fin_de_mes') setNumeroCuotas(1);
+    setCarrito((prev) => repreciar(prev, m));
+    setPreview(null);
+    setError('');
+  };
+
   const agregarAlCarrito = (productoId: string) => {
     const producto = productos.find((p) => p.id === productoId);
     if (!producto) return;
 
-    const precioUsar =
-      modalidadPago === 'cuotas' ? producto.precioCredito : producto.precioContado;
+    // Si se agrega un producto sin cuotas estando en "Cuotas", se pasa a pago único
+    const modalidadEf: ModalidadPago =
+      modalidadPago === 'cuotas' && (cuotasBloqueadas || !producto.permiteCuotas)
+        ? 'fin_de_mes'
+        : modalidadPago;
+    if (modalidadEf !== modalidadPago) {
+      setModalidadPago(modalidadEf);
+      setNumeroCuotas(1);
+    }
+    const precioUsar = precioPara(productoId, modalidadEf, 0);
 
     setCarrito((prev) => {
-      const exist = prev.find((i) => i.productoId === productoId);
+      const base = modalidadEf !== modalidadPago ? repreciar(prev, modalidadEf) : prev;
+      const exist = base.find((i) => i.productoId === productoId);
       if (exist) {
-        return prev.map((i) =>
+        return base.map((i) =>
           i.productoId === productoId
             ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precioUnitario }
             : i
         );
       }
       return [
-        ...prev,
+        ...base,
         {
           productoId,
           descripcion: producto.descripcion,
@@ -213,6 +245,7 @@ export default function ATPuntoVenta() {
     setClienteId('');
     setPreview(null);
     setNumeroCuotas(1);
+    setModalidadPago('fin_de_mes');
   };
 
   return (
@@ -299,7 +332,7 @@ export default function ATPuntoVenta() {
                     type="radio"
                     className="sr-only"
                     checked={modalidadPago === 'fin_de_mes'}
-                    onChange={() => { setModalidadPago('fin_de_mes'); setNumeroCuotas(1); setPreview(null); }}
+                    onChange={() => cambiarModalidad('fin_de_mes')}
                   />
                   <p className="font-medium text-sm">Fin de mes / Único</p>
                   <p className="text-xs text-gray-500 mt-0.5">Pago único con interés diario</p>
@@ -316,7 +349,7 @@ export default function ATPuntoVenta() {
                     className="sr-only"
                     disabled={cuotasBloqueadas}
                     checked={modalidadPago === 'cuotas'}
-                    onChange={() => { setModalidadPago('cuotas'); setPreview(null); }}
+                    onChange={() => cambiarModalidad('cuotas')}
                   />
                   <p className="font-medium text-sm">Cuotas</p>
                   <p className="text-xs text-gray-500 mt-0.5">Método Francés Vencido</p>

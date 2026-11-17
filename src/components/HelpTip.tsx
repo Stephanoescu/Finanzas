@@ -22,20 +22,29 @@ export default function HelpTip({ text }: { text: string }) {
     setPos({ top: r.bottom + 6, left });
   }, [abierto]);
 
+  // Escape cierra el tooltip en cualquier modo (hover, foco o fijado)
+  useEffect(() => {
+    if (!abierto) return;
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setHover(false);
+      setPinned(false);
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [abierto]);
+
   useEffect(() => {
     if (!pinned) return;
     const cerrar = (e: Event) => {
-      if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
       if (e instanceof MouseEvent || e instanceof TouchEvent) {
         if (btnRef.current?.contains(e.target as Node)) return;
       }
       setPinned(false);
     };
-    document.addEventListener('keydown', cerrar);
     document.addEventListener('mousedown', cerrar);
     document.addEventListener('touchstart', cerrar);
     return () => {
-      document.removeEventListener('keydown', cerrar);
       document.removeEventListener('mousedown', cerrar);
       document.removeEventListener('touchstart', cerrar);
     };

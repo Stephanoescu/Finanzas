@@ -71,7 +71,8 @@ export default function ATEstadoCuenta() {
     const totalDeuda = cronogramaActualizado
       .filter((c) => c.estado !== 'pagada')
       .reduce((s, c) => s + c.cuota, 0);
-    const totalMora = cronogramaActualizado.reduce((s, c) => s + c.mora, 0);
+    // Solo la mora de cuotas impagas: la mora de una cuota ya pagada quedó saldada en su pago
+    const totalMora = cronogramaActualizado.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.mora, 0);
     const pendientes = cronogramaActualizado.filter((c) => c.estado !== 'pagada');
     const totalCapital = pendientes.reduce((s, c) => s + c.capital, 0);
     const totalInteres = pendientes.reduce((s, c) => s + c.interes, 0);

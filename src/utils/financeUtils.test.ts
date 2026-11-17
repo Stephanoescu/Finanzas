@@ -11,6 +11,7 @@ import {
   aplicarPrelacion,
   aplicarMoraAlCronograma,
   redondear,
+  precioSegunModalidad,
 } from './financeUtils';
 
 const base = {
@@ -160,5 +161,15 @@ describe('Tasa nominal coherente', () => {
   });
   it('TNA con capitalización diaria: TED = TNA/360', () => {
     expect(calcularTED(0.36, 'TNA', 1)).toBeCloseTo(0.001, 12);
+  });
+});
+
+describe('Precio según modalidad (carrito del punto de venta)', () => {
+  const cocina = { precioContado: 420, precioCredito: 450 };
+  it('pago único usa precio de contado', () => {
+    expect(precioSegunModalidad(cocina, 'fin_de_mes')).toBe(420);
+  });
+  it('cuotas usa precio de crédito', () => {
+    expect(precioSegunModalidad(cocina, 'cuotas')).toBe(450);
   });
 });

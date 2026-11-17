@@ -30,7 +30,8 @@ export default function CLDashboard() {
       tx.capitalizacion ?? 30
     );
     const totalDeuda = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.cuota, 0);
-    const totalMora = cronograma.reduce((s, c) => s + c.mora, 0);
+    // Solo la mora de cuotas impagas: la mora de una cuota ya pagada quedó saldada en su pago
+    const totalMora = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.mora, 0);
     const proximaVenc = cronograma.find((c) => c.estado === 'pendiente' || c.estado === 'vencida');
     return { tx, cronograma, totalDeuda, totalMora, proximaVenc };
   });
