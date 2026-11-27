@@ -12,7 +12,10 @@ import {
   aplicarMoraAlCronograma,
   redondear,
   precioSegunModalidad,
+  calcularCapitalPendiente,
+  calcularLineaDisponible,
 } from './financeUtils';
+import type { CuotaCronograma, Transaccion } from '../types/models';
 
 const base = {
   tipoTasa: 'TEA' as const,
@@ -171,5 +174,80 @@ describe('Precio según modalidad (carrito del punto de venta)', () => {
   });
   it('cuotas usa precio de crédito', () => {
     expect(precioSegunModalidad(cocina, 'cuotas')).toBe(450);
+  });
+});
+
+describe('Línea disponible (F9: solo el capital pendiente consume línea)', () => {
+  // María: línea S/ 1,000; cocina S/ 450 en 3 cuotas comprada el 15/09/2026.
+  // El cronograma francés amortiza C′ = 453.62 (monto + gracia capitalizada de
+  // 11 días), así que el capital pendiente sin pagos es C′, no 450.
+  const maria = { id: 'cli-maria', limiteCredito: 1000 };
+  const r = construirTransaccion({
+    ...base,
+    montoOriginal: 450,
+    modalidadPago: 'cuotas',
+    numeroCuotas: 3,
+    fechaCompra: new Date(2026, 8, 15),
+  });
+  const cronograma: CuotaCronograma[] = r.cronograma.map((c) => ({
+    ...c,
+    mora: 0,
+    totalPagar: c.cuota,
+    estado: 'pendiente',
+  }));
+  const cocina = { clienteId: maria.id, estado: 'vigente' as Transaccion['estado'], cronograma };
+
+  it('el cronograma amortiza exactamente C′ = 453.62', () => {
+    expect(r.capitalConGracia).toBe(453.62);
+    expect(redondear(cronograma.reduce((s, c) => s + c.capital, 0))).toBe(453.62);
+  });
+
+  it('sin pagos: capital pendiente 453.62 y disponible 546.38', () => {
+    expect(calcularCapitalPendiente([cocina])).toBe(453.62);
+    expect(calcularLineaDisponible(maria, [cocina])).toEqual({ utilizado: 453.62, disponible: 546.38 });
+  });
+
+  it('intereses y mora no consumen línea (con mora vigente el disponible no cambia)', () => {
+    const conMora = aplicarMoraAlCronograma(cronograma, 0.5, 'TEA', new Date(2026, 11, 5));
+    expect(conMora.some((c) => c.mora > 0)).toBe(true);
+    expect(calcularLineaDisponible(maria, [{ ...cocina, estado: 'en_mora', cronograma: conMora }]).disponible).toBe(546.38);
+  });
+
+  it('pagar la cuota 1 aumenta el disponible exactamente en su amortización', () => {
+    const antes = calcularLineaDisponible(maria, [cocina]).disponible;
+    const pagada = cronograma.map((c) => (c.numeroCuota === 1 ? { ...c, estado: 'pagada' as const } : c));
+    const despues = calcularLineaDisponible(maria, [{ ...cocina, cronograma: pagada }]).disponible;
+    expect(redondear(despues - antes)).toBe(cronograma[0].capital);
+    expect(despues).toBe(redondear(546.38 + cronograma[0].capital));
+  });
+
+  it('un crédito liquidado aporta 0 (y uno castigado tampoco)', () => {
+    const pagado = cronograma.map((c) => ({ ...c, estado: 'pagada' as const }));
+    expect(calcularCapitalPendiente([{ ...cocina, estado: 'liquidado', cronograma: pagado }])).toBe(0);
+    // Aunque quedaran cuotas sin marcar, el estado del crédito manda
+    expect(calcularCapitalPendiente([{ ...cocina, estado: 'liquidado' }])).toBe(0);
+    expect(calcularCapitalPendiente([{ ...cocina, estado: 'castigado' }])).toBe(0);
+    expect(calcularLineaDisponible(maria, [{ ...cocina, estado: 'liquidado', cronograma: pagado }]).disponible).toBe(1000);
+  });
+
+  it('pago único: consume el monto de la compra, no el total con interés', () => {
+    const fm = construirTransaccion({
+      ...base,
+      montoOriginal: 72,
+      modalidadPago: 'fin_de_mes',
+      numeroCuotas: 1,
+      fechaCompra: new Date(2026, 10, 10),
+    });
+    const tx = {
+      clienteId: maria.id,
+      estado: 'vigente' as Transaccion['estado'],
+      cronograma: fm.cronograma.map((c) => ({ ...c, estado: 'pendiente' as const })),
+    };
+    expect(calcularLineaDisponible(maria, [cocina, tx])).toEqual({ utilizado: 525.62, disponible: 474.38 });
+  });
+
+  it('solo cuenta las transacciones del cliente indicado', () => {
+    const otro = { ...cocina, clienteId: 'cli-jose' };
+    expect(calcularLineaDisponible(maria, [cocina, otro]).utilizado).toBe(453.62);
   });
 });

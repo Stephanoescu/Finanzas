@@ -5,6 +5,8 @@ import { storageTransacciones, generarId } from '../../utils/storage';
 import {
   construirTransaccion,
   validarLimiteCredito,
+  calcularLineaDisponible,
+  AYUDA_LINEA_DISPONIBLE,
   formatearMoneda,
   formatearTasa,
   precioSegunModalidad,
@@ -46,6 +48,9 @@ export default function ATPuntoVenta() {
   const cliente = clientes.find((c) => c.id === clienteId);
   const moneda = cliente?.moneda ?? 'PEN';
   const fm = (v: number) => formatearMoneda(v, moneda);
+  const linea = cliente
+    ? calcularLineaDisponible(cliente, datos.transacciones)
+    : { utilizado: 0, disponible: 0 };
 
   const productosFiltrados = productos.filter(
     (p) =>
@@ -159,16 +164,8 @@ export default function ATPuntoVenta() {
     if (carrito.length === 0) { setError('El carrito está vacío'); return; }
     if (modalidadPago === 'cuotas' && cuotasBloqueadas) { setError(motivoCuotas); return; }
 
-    // Validar límite de crédito
-    const transVigentes = datos.transacciones.filter(
-      (t) => t.clienteId === clienteId && (t.estado === 'vigente' || t.estado === 'en_mora')
-    );
-    const saldoUtilizado = transVigentes.reduce((sum, t) => {
-      const cuotasPend = t.cronograma.filter((c) => c.estado !== 'pagada');
-      return sum + cuotasPend.reduce((s, c) => s + c.capital, 0);
-    }, 0);
-
-    const validacion = validarLimiteCredito(saldoUtilizado, totalCarrito, cliente.limiteCredito);
+    // Validar límite de crédito (F9: solo el capital pendiente consume línea)
+    const validacion = validarLimiteCredito(linea.utilizado, totalCarrito, cliente.limiteCredito);
     if (!validacion.aprobado) {
       setError(
         `Excede el límite de crédito. Disponible: ${fm(validacion.saldoDisponible)}. Exceso: ${fm(validacion.exceso)}`
@@ -308,6 +305,16 @@ export default function ATPuntoVenta() {
                   </div>
                   <div className="bg-gray-50 rounded p-2">
                     <span className="font-medium">Pago día:</span> {cliente.diaPago}
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="font-medium">Línea utilizada (capital):</span>{' '}
+                    <span className="text-money">{fm(linea.utilizado)}</span>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2" data-testid="linea-disponible">
+                    <span className="font-medium">Línea disponible<HelpTip text={AYUDA_LINEA_DISPONIBLE} />:</span>{' '}
+                    <span className={`text-money ${linea.disponible < 0 ? 'text-danger-700' : 'text-success-700'}`} data-monto>
+                      {fm(Math.max(0, linea.disponible))}
+                    </span>
                   </div>
                 </div>
               )}

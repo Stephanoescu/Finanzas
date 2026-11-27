@@ -50,6 +50,7 @@ Ej.: TNA 24 % capitalizable mensualmente → TEM = 2.0000000 %, TEA = 26.8241795
 | Cuota (método francés) | `R = C' × TEM(1+TEM)^n / ((1+TEM)^n − 1)`; la última cuota absorbe el redondeo |
 | Interés moratorio | `Mora = Cuota × [(1 + TED_mora)^días_atraso − 1]` (días exactos) |
 | TCEA | TIR diaria de los flujos (−monto en la compra, cuotas a `días_gracia + 30·k`), `TCEA = (1 + TIRd)^360 − 1` |
+| Línea disponible (F9) | `Disponible = Línea − Σ capital pendiente de amortizar` de los créditos no liquidados ni castigados (`calcularLineaDisponible`). Intereses y mora no consumen línea; es el mismo número en el punto de venta, el estado de cuenta y el dashboard del cliente |
 
 ### Fechas
 
@@ -127,6 +128,8 @@ npm run build
 # Pruebas
 npx vitest run
 ```
+
+> En Windows, ejecuta las pruebas desde una ruta con la unidad en mayúscula (`C:\...`). Si la terminal abre la carpeta como `c:\...`, vitest carga dos copias de sí mismo y falla con "Vitest failed to find the current suite".
 
 ---
 

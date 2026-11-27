@@ -1,5 +1,11 @@
 import { useAppStore, useAppData } from '../../store/useAppStore';
-import { aplicarMoraAlCronograma, formatearMoneda } from '../../utils/financeUtils';
+import {
+  aplicarMoraAlCronograma,
+  calcularLineaDisponible,
+  formatearMoneda,
+  AYUDA_LINEA_DISPONIBLE,
+} from '../../utils/financeUtils';
+import HelpTip from '../../components/HelpTip';
 import { CuotaCronograma } from '../../types/models';
 import { CreditCard, TrendingUp, AlertTriangle, CheckCircle, Calendar } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
@@ -29,16 +35,20 @@ export default function CLDashboard() {
       fechaActual,
       tx.capitalizacion ?? 30
     );
-    const totalDeuda = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.cuota, 0);
     // Solo la mora de cuotas impagas: la mora de una cuota ya pagada quedó saldada en su pago
     const totalMora = cronograma.filter((c) => c.estado !== 'pagada').reduce((s, c) => s + c.mora, 0);
     const proximaVenc = cronograma.find((c) => c.estado === 'pendiente' || c.estado === 'vencida');
-    return { tx, cronograma, totalDeuda, totalMora, proximaVenc };
+    return { tx, cronograma, totalMora, proximaVenc };
   });
 
-  const totalDeuda = transaccionesConMora.reduce((s, t) => s + t.totalDeuda, 0);
   const totalMora = transaccionesConMora.reduce((s, t) => s + t.totalMora, 0);
-  const disponible = (cliente?.limiteCredito ?? 0) - totalDeuda;
+  // F9: solo el capital pendiente consume línea (misma función que el punto de venta)
+  const linea = cliente
+    ? calcularLineaDisponible(cliente, datos.transacciones)
+    : { utilizado: 0, disponible: 0 };
+  const utilizado = linea.utilizado;
+  const disponible = linea.disponible;
+  const usoLinea = cliente && cliente.limiteCredito > 0 ? utilizado / cliente.limiteCredito : 0;
 
   // Próximos pagos (cuotas pendientes de todas las transacciones, ordenadas por fecha)
   const proximosPagos = transaccionesConMora
@@ -79,13 +89,13 @@ export default function CLDashboard() {
             </p>
           </div>
           <div>
-            <p className="text-primary-200 text-xs">Utilizado</p>
+            <p className="text-primary-200 text-xs">Línea utilizada (capital)</p>
             <p className="text-2xl font-bold text-money mt-1">
-              {fm(totalDeuda)}
+              {fm(utilizado)}
             </p>
           </div>
-          <div>
-            <p className="text-primary-200 text-xs">Disponible</p>
+          <div data-testid="linea-disponible">
+            <p className="text-primary-200 text-xs">Línea disponible<HelpTip text={AYUDA_LINEA_DISPONIBLE} /></p>
             <p className="text-2xl font-bold text-money mt-1">
               {fm(Math.max(0, disponible))}
             </p>
@@ -95,13 +105,13 @@ export default function CLDashboard() {
         {/* Barra de uso */}
         <div className="mt-4">
           <div className="flex justify-between text-xs text-primary-200 mb-1">
-            <span>Utilización</span>
-            <span>{((totalDeuda / cliente.limiteCredito) * 100).toFixed(1)}%</span>
+            <span>Utilización (capital)</span>
+            <span>{(usoLinea * 100).toFixed(1)}%</span>
           </div>
           <div className="w-full bg-white/20 rounded-full h-2">
             <div
               className="bg-white h-2 rounded-full transition-all"
-              style={{ width: `${Math.min(100, (totalDeuda / cliente.limiteCredito) * 100)}%` }}
+              style={{ width: `${Math.min(100, usoLinea * 100)}%` }}
             />
           </div>
         </div>
