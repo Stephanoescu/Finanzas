@@ -1,6 +1,6 @@
 # Resultados de la prueba manual automatizada (Playwright + Chromium, 1366×820)
 
-Fecha de ejecución: 2026-11-17 · Rama `fix/enunciado-final` · `npm run dev` en http://localhost:5173
+Fecha de ejecución: 2026-11-27 · Rama `fix/linea-disponible` · `npm run dev` en http://localhost:5173
 
 Las pruebas se ejecutan con `scripts/e2e-capturas.mjs` (ver README del script). Cada fila compara el valor esperado del enunciado con el valor leído en pantalla (o en `localStorage` cuando se indica).
 
@@ -51,20 +51,26 @@ Las pruebas se ejecutan con `scripts/e2e-capturas.mjs` (ver README del script). 
 | 43 | h) Crédito pasa a Liquidado | única cuota pagada | liquidado | liquidado | ✅ Sí |
 | 44 | h) Badge "Liquidado" en pantalla | tarjeta del crédito | Liquidado | Liquidado | ✅ Sí |
 | 45 | h) Total a pagar global no suma la mora ya pagada | cocina 473.83 deuda + 8.89 mora pendiente (el crédito liquidado aporta 0) | S/ 482.72 | S/ 482.72 | ✅ Sí |
-| 46 | i) Total a pagar del cliente coincide con el del admin | estado de cuenta de maria | S/ 482.72 | S/ 482.72 | ✅ Sí |
-| 47 | i) Cliente ve moneda S/ | estado de cuenta de maria | montos con "S/" | montos con "S/" | ✅ Sí |
-| 48 | i) Cliente ve TCEA | estado de cuenta | TCEA presente | TCEA presente | ✅ Sí |
-| 49 | i) Cliente ve "Intereses por mora" y compensatorio | estado de cuenta | ambos presentes | ambos presentes | ✅ Sí |
-| 50 | i) Cliente ve el crédito liquidado | estado de cuenta | Liquidado | Liquidado | ✅ Sí |
-| 51 | b) Tooltip abre con toque (tap) | touchscreen.tap en ? | visible | visible | ✅ Sí |
-| 52 | b) Tooltip se cierra al tocar fuera | tap fuera | oculto | oculto | ✅ Sí |
-| 53 | Migración: admin recorre dashboard/clientes/productos/POS/estado de cuenta | JSON formato anterior (sin moneda, capitalización, tcea, fechaPrimerPago) | sin errores y datos visibles | sin errores y datos visibles | ✅ Sí |
-| 54 | Migración: cliente antiguo asume moneda PEN | fila de Clientes | S/ 500.00 | Pedro Antiguo 11112222 - TNA 24.00% S/ 500.00 20 / 26 Activo EditarEliminar | ✅ Sí |
-| 55 | Migración: cliente antiguo ve su cuenta | login pedro/pedro123 | dashboard y estado de cuenta cargan | cargan | ✅ Sí |
+| 46 | F9) Estado de cuenta: línea utilizada = capital pendiente | María: C′ de la cocina sin pagos; el crédito liquidado aporta 0 | S/ 453.62 | S/ 453.62 | ✅ Sí |
+| 47 | F9) Estado de cuenta: línea disponible | 1,000 − 453.62 (intereses y mora no consumen línea) | S/ 546.38 | S/ 546.38 | ✅ Sí |
+| 48 | F9) Punto de venta: línea disponible | María seleccionada | S/ 546.38 | S/ 546.38 | ✅ Sí |
+| 49 | F9) Dashboard del cliente: línea disponible | login maria | S/ 546.38 | S/ 546.38 | ✅ Sí |
+| 50 | F9) Mismo disponible en Estado de cuenta, Dashboard del cliente y Punto de venta | EC S/ 546.38 / CL S/ 546.38 / PV S/ 546.38 | iguales | iguales | ✅ Sí |
+| 51 | i) Total a pagar del cliente coincide con el del admin | estado de cuenta de maria | S/ 482.72 | S/ 482.72 | ✅ Sí |
+| 52 | i) Cliente ve moneda S/ | estado de cuenta de maria | montos con "S/" | montos con "S/" | ✅ Sí |
+| 53 | i) Cliente ve TCEA | estado de cuenta | TCEA presente | TCEA presente | ✅ Sí |
+| 54 | i) Cliente ve "Intereses por mora" y compensatorio | estado de cuenta | ambos presentes | ambos presentes | ✅ Sí |
+| 55 | i) Cliente ve el crédito liquidado | estado de cuenta | Liquidado | Liquidado | ✅ Sí |
+| 56 | b) Tooltip abre con toque (tap) | touchscreen.tap en ? | visible | visible | ✅ Sí |
+| 57 | b) Tooltip se cierra al tocar fuera | tap fuera | oculto | oculto | ✅ Sí |
+| 58 | Migración: admin recorre dashboard/clientes/productos/POS/estado de cuenta | JSON formato anterior (sin moneda, capitalización, tcea, fechaPrimerPago) | sin errores y datos visibles | sin errores y datos visibles | ✅ Sí |
+| 59 | Migración: cliente antiguo asume moneda PEN | fila de Clientes | S/ 500.00 | Pedro Antiguo 11112222 - TNA 24.00% S/ 500.00 20 / 26 Activo EditarEliminar | ✅ Sí |
+| 60 | Migración: cliente antiguo ve su cuenta | login pedro/pedro123 | dashboard y estado de cuenta cargan | cargan | ✅ Sí |
 
-**55 de 55 comprobaciones coinciden.** Errores `console.error` / `pageerror` durante todos los flujos: **0**.
+**60 de 60 comprobaciones coinciden.** Errores `console.error` / `pageerror` durante todos los flujos: **0**.
 
 ## Notas
 - La captura `12_ec_pago_confirmacion.png` usa una réplica en DOM del cuadro `window.confirm` (los diálogos nativos no se pueden capturar). El texto es el mensaje real que genera la app; la comprobación del diálogo nativo real (mensaje y cancelación) está en la fila "El pago pide confirmación".
 - En el paso (h) la cocina de María (cuotas 26/10 y 26/11) también está vencida al 05/12/2026: mora 7.28 + 1.61 = 8.89. Solo se paga el crédito de fin de mes; el total a pagar restante es S/ 473.83 + S/ 8.89 = S/ 482.72.
+- Línea disponible (F9): las tres pantallas usan `calcularLineaDisponible` (línea − capital pendiente de amortizar de los créditos no liquidados ni castigados). Al 05/12/2026 María tiene la cocina sin pagos (capital pendiente C′ = 453.62) y el pago único ya liquidado, así que el disponible es S/ 546.38 en el Estado de cuenta, el Dashboard del cliente y el Punto de venta. Antes de este cambio el Estado de cuenta y el Dashboard restaban las cuotas con interés (473.83) y mostraban S/ 526.17. El "Total a pagar" (S/ 482.72, cuotas + mora) no cambia.
 - La migración se probó cargando un JSON con el formato anterior (cliente sin `moneda`/`capitalizacion`, crédito con `fechaPrimerPago` y sin `tcea`); se migra en memoria al leer y se persiste en el siguiente guardado.

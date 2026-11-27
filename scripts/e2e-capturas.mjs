@@ -376,6 +376,19 @@ const deudaCocina = (await page.locator('div.card.overflow-hidden').filter({ has
 log('cabecera Cocina:', deudaCocina.replace(/\s+/g,' '));
 check('h) Total a pagar global no suma la mora ya pagada', 'cocina 473.83 deuda + 8.89 mora pendiente (el crédito liquidado aporta 0)', 'S/ 482.72', totalAPagarAdmin, totalAPagarAdmin === 'S/ 482.72');
 
+// ───────────────────────── F9) Línea disponible: el mismo número en las tres pantallas
+// Estado de cuenta del admin (cocina sin pagos; el pago único ya está liquidado)
+const dispEC = (await page.locator('[data-testid=linea-disponible] .stat-value').innerText()).trim();
+const utilEC = (await page.locator('.stat-card:has-text("Línea utilizada (capital)") .stat-value').innerText()).trim();
+check('F9) Estado de cuenta: línea utilizada = capital pendiente', 'María: C′ de la cocina sin pagos; el crédito liquidado aporta 0', 'S/ 453.62', utilEC);
+check('F9) Estado de cuenta: línea disponible', '1,000 − 453.62 (intereses y mora no consumen línea)', 'S/ 546.38', dispEC);
+// Punto de venta: el disponible con el que valida la línea
+await nav('Punto de Venta');
+await page.waitForSelector('text=Seleccionar Cliente');
+await selCliente('María');
+const dispPV = (await page.locator('[data-testid=linea-disponible] [data-monto]').innerText()).trim();
+check('F9) Punto de venta: línea disponible', 'María seleccionada', 'S/ 546.38', dispPV);
+
 // Dashboard admin
 await nav('Dashboard');
 await page.waitForSelector('text=Clientes Activos');
@@ -386,6 +399,10 @@ await logout();
 await login('maria', 'maria123');
 await page.waitForSelector('text=Hola, María');
 await shot('15_cl_dashboard');
+const dispCL = (await page.locator('[data-testid=linea-disponible] p.text-money').innerText()).trim();
+check('F9) Dashboard del cliente: línea disponible', 'login maria', 'S/ 546.38', dispCL);
+check('F9) Mismo disponible en Estado de cuenta, Dashboard del cliente y Punto de venta',
+  `EC ${dispEC} / CL ${dispCL} / PV ${dispPV}`, 'iguales', dispEC === dispCL && dispCL === dispPV ? 'iguales' : 'distintos');
 await nav('Estado de Cuenta');
 await page.waitForSelector('text=Mi Estado de Cuenta');
 const totCl = (await page.locator('.stat-card:has-text("Total a Pagar") .stat-value').innerText()).trim();
