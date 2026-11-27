@@ -71,6 +71,27 @@ function crearDatosIniciales(): AppData {
   };
 }
 
+// ─── MIGRACIÓN DE DATOS ANTIGUOS ─────────────────────────────
+
+/** Completa los campos nuevos en datos guardados por versiones anteriores. */
+function migrarDatos(datos: AppData): AppData {
+  datos.clientes = (datos.clientes ?? []).map((c) => ({
+    ...c,
+    moneda: c.moneda ?? 'PEN',
+    capitalizacion: c.capitalizacion ?? 30,
+  }));
+  datos.transacciones = (datos.transacciones ?? []).map((t) => {
+    // `fechaPrimerPago` es el nombre antiguo de la fecha de pago del ciclo
+    const legacy = t as Transaccion & { fechaPrimerPago?: string };
+    return {
+      ...t,
+      fechaPagoCiclo: t.fechaPagoCiclo ?? legacy.fechaPrimerPago ?? t.cronograma[0]?.fechaVencimiento,
+      fechaPrimeraCuota: t.fechaPrimeraCuota ?? t.cronograma[0]?.fechaVencimiento,
+    };
+  });
+  return datos;
+}
+
 // ─── LECTURA Y ESCRITURA ─────────────────────────────────────
 
 export function leerDatos(): AppData {
@@ -82,8 +103,7 @@ export function leerDatos(): AppData {
       return datos;
     }
     const parsed = JSON.parse(raw) as AppData;
-    // Migración futura: if (parsed.version !== CURRENT_VERSION) migrate(parsed)
-    return parsed;
+    return migrarDatos(parsed);
   } catch (error) {
     console.error('[CDC] Error al leer localStorage, reiniciando datos:', error);
     const datos = crearDatosIniciales();

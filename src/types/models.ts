@@ -9,6 +9,9 @@ export type UserRole = 'superadmin' | 'admin_tienda' | 'cliente';
 /** Tipo de tasa de interés pactada con el cliente */
 export type TipoTasa = 'TNA' | 'TEA'; // Nominal Anual | Efectiva Anual
 
+/** Moneda en la que opera un cliente */
+export type Moneda = 'PEN' | 'USD';
+
 /** Modalidad de pago de una transacción */
 export type ModalidadPago = 'fin_de_mes' | 'cuotas';
 
@@ -42,6 +45,8 @@ export interface Tienda {
   telefono?: string;
   logoUrl?: string;
   activa: boolean;
+  /** Tasa máxima BCRP (TEA, decimal). Tope para tasas compensatoria y moratoria de clientes. */
+  tasaMaxBCRP?: number;
   creadaEn: string;         // ISO 8601
   adminId: string;          // Referencia al AdminTienda
 }
@@ -73,6 +78,7 @@ export interface Producto {
   precioContado: number;    // Precio de venta al contado
   precioCredito: number;    // Precio de venta a crédito (puede diferir)
   permiteCuotas: boolean;   // Toggle: ¿Se puede financiar en meses?
+  imagenUrl?: string;       // URL o data URL (imagen pequeña subida)
   activo: boolean;
   creadoEn: string;
 }
@@ -95,7 +101,10 @@ export interface Cliente {
   passwordHash: string;
 
   // Configuración financiera
+  moneda: Moneda;           // 'PEN' (por defecto) | 'USD'
   tipoTasa: TipoTasa;       // 'TNA' o 'TEA'
+  /** Días por período de capitalización de la TNA (1 = diaria, 30 = mensual). Por defecto 30. */
+  capitalizacion: number;
   tasaInteres: number;      // En decimal (ej: 0.24 = 24%)
   tasaMoratoria: number;    // En decimal (ej: 0.36 = 36% anual)
   limiteCredito: number;    // Monto máximo de línea
@@ -138,7 +147,9 @@ export interface Transaccion {
   montoOriginal: number;    // Suma de subtotales (sin intereses)
 
   // Configuración financiera al momento de la compra (snapshot)
+  moneda?: Moneda;          // Snapshot (ausente en datos antiguos → PEN)
   tipoTasa: TipoTasa;
+  capitalizacion?: number;  // Snapshot (ausente en datos antiguos → 30)
   tasaInteres: number;      // Decimal
   tasaMoratoria: number;    // Decimal
 
@@ -148,8 +159,10 @@ export interface Transaccion {
 
   // Fechas calculadas
   fechaCorte: string;       // ISO: próxima fecha de corte
-  fechaPrimerPago: string;  // ISO: primera fecha de pago
-  diasGracia: number;       // Días entre compra y fecha de primer pago
+  fechaPagoCiclo: string;   // ISO: fecha de pago del ciclo (hasta donde se capitaliza la deuda)
+  fechaPrimeraCuota: string; // ISO: vencimiento real de la 1ra cuota (pagoCiclo + 1 mes; = pagoCiclo en pago único)
+  diasGracia: number;       // Días entre compra y fecha de pago del ciclo
+  tcea?: number;            // TCEA de la operación (decimal)
 
   // Capitalización por gracia (C efectivo para la fórmula francesa)
   capitalConGracia: number; // montoOriginal * (1 + TED)^diasGracia

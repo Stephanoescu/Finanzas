@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { useAppStore, useAppData } from '../../store/useAppStore';
 import { storageProductos, generarId } from '../../utils/storage';
 import { Producto } from '../../types/models';
+import HelpTip from '../../components/HelpTip';
+import { reducirImagen } from '../../utils/imagen';
+import { Package } from 'lucide-react';
 
 export default function ATProductos() {
   const { sesion, refrescarDatos } = useAppStore();
@@ -19,6 +22,8 @@ export default function ATProductos() {
   const [precioCredito, setPrecioCredito] = useState('');
   const [permiteCuotas, setPermiteCuotas] = useState(false);
   const [activo, setActivo] = useState(true);
+  const [imagenUrl, setImagenUrl] = useState('');
+  const [errorImagen, setErrorImagen] = useState('');
 
   if (!sesion || !sesion.tiendaId) {
     return <div>Acceso denegado</div>;
@@ -38,6 +43,7 @@ export default function ATProductos() {
       setPrecioCredito(producto.precioCredito.toString());
       setPermiteCuotas(producto.permiteCuotas);
       setActivo(producto.activo);
+      setImagenUrl(producto.imagenUrl || '');
     } else {
       setEditingProducto(null);
       setDescripcion('');
@@ -48,7 +54,9 @@ export default function ATProductos() {
       setPrecioCredito('');
       setPermiteCuotas(false);
       setActivo(true);
+      setImagenUrl('');
     }
+    setErrorImagen('');
     setModalOpen(true);
   };
 
@@ -69,6 +77,7 @@ export default function ATProductos() {
       precioContado: parseFloat(precioContado) || 0,
       precioCredito: parseFloat(precioCredito) || 0,
       permiteCuotas,
+      imagenUrl: imagenUrl.trim() || undefined,
       activo,
       creadoEn: editingProducto ? editingProducto.creadoEn : new Date().toISOString(),
     };
@@ -76,6 +85,16 @@ export default function ATProductos() {
     storageProductos.guardar(newProducto);
     refrescarDatos();
     handleCloseModal();
+  };
+
+  const handleArchivo = async (file?: File) => {
+    if (!file) return;
+    try {
+      setErrorImagen('');
+      setImagenUrl(await reducirImagen(file));
+    } catch {
+      setErrorImagen('No se pudo leer la imagen. Pruebe con otro archivo.');
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -106,6 +125,7 @@ export default function ATProductos() {
               <table className="table w-full">
                 <thead>
                   <tr>
+                    <th>Imagen</th>
                     <th>Descripción</th>
                     <th>Proveedor</th>
                     <th>Marca</th>
@@ -120,6 +140,15 @@ export default function ATProductos() {
                 <tbody>
                   {productosTienda.map((p) => (
                     <tr key={p.id}>
+                      <td>
+                        {p.imagenUrl ? (
+                          <img src={p.imagenUrl} alt={p.descripcion} className="w-10 h-10 rounded object-cover" />
+                        ) : (
+                          <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center text-gray-300">
+                            <Package className="w-5 h-5" />
+                          </div>
+                        )}
+                      </td>
                       <td>{p.descripcion}</td>
                       <td>{p.proveedor || '-'}</td>
                       <td>{p.marca || '-'}</td>
@@ -178,7 +207,7 @@ export default function ATProductos() {
               <form onSubmit={handleSave}>
                 <div className="grid grid-cols-1 gap-4">
                   <div>
-                    <label className="label">Descripción *</label>
+                    <label className="label">Descripción *<HelpTip text="Nombre del producto tal como se verá en el punto de venta y en el estado de cuenta. No afecta el cálculo." /></label>
                     <input
                       required
                       className="input w-full"
@@ -187,7 +216,7 @@ export default function ATProductos() {
                     />
                   </div>
                   <div>
-                    <label className="label">Proveedor</label>
+                    <label className="label">Proveedor<HelpTip text="Quién le abastece este producto. Es solo informativo." /></label>
                     <input
                       className="input w-full"
                       value={proveedor}
@@ -195,7 +224,7 @@ export default function ATProductos() {
                     />
                   </div>
                   <div>
-                    <label className="label">Marca</label>
+                    <label className="label">Marca<HelpTip text="Marca comercial del producto. Es solo informativo; se usa también para buscar en el punto de venta." /></label>
                     <input
                       className="input w-full"
                       value={marca}
@@ -203,7 +232,7 @@ export default function ATProductos() {
                     />
                   </div>
                   <div>
-                    <label className="label">Unidad *</label>
+                    <label className="label">Unidad *<HelpTip text="Unidad de venta: kg, lt, unidad, docena, etc. Es solo informativo." /></label>
                     <input
                       required
                       className="input w-full"
@@ -213,7 +242,7 @@ export default function ATProductos() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="label">Precio Contado *</label>
+                      <label className="label">Precio Contado *<HelpTip text="Precio por unidad si el cliente paga al contado, en la moneda del cliente. Se usa cuando la venta es de pago único." /></label>
                       <input
                         required
                         type="number"
@@ -224,7 +253,7 @@ export default function ATProductos() {
                       />
                     </div>
                     <div>
-                      <label className="label">Precio Crédito *</label>
+                      <label className="label">Precio Crédito *<HelpTip text="Precio por unidad en venta a crédito en cuotas, en la moneda del cliente. Es el monto base sobre el que se calculan los intereses." /></label>
                       <input
                         required
                         type="number"
@@ -235,6 +264,26 @@ export default function ATProductos() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className="label">Imagen<HelpTip text="Foto del producto para el catálogo y el punto de venta. Pegue una URL o suba un archivo (se reduce y se guarda en el navegador). Es solo visual; no afecta el cálculo." /></label>
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      className="input w-full"
+                      value={imagenUrl.startsWith('data:') ? '' : imagenUrl}
+                      onChange={(e) => setImagenUrl(e.target.value)}
+                    />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="mt-2 text-sm"
+                      onChange={(e) => handleArchivo(e.target.files?.[0])}
+                    />
+                    {errorImagen && <p className="text-xs text-danger-600 mt-1">{errorImagen}</p>}
+                    {imagenUrl && (
+                      <img src={imagenUrl} alt="Vista previa" className="mt-2 w-20 h-20 rounded object-cover border" />
+                    )}
+                  </div>
                   <div className="flex items-center space-x-4 mt-2">
                     <label className="flex items-center space-x-2">
                       <input
@@ -243,6 +292,7 @@ export default function ATProductos() {
                         onChange={(e) => setPermiteCuotas(e.target.checked)}
                       />
                       <span>Permite Cuotas</span>
+                      <HelpTip text="Si está activo, el producto puede financiarse en cuotas mensuales. Si el carrito contiene un producto que no lo permite, el punto de venta solo ofrece pago único." />
                     </label>
                     <label className="flex items-center space-x-2">
                       <input
@@ -251,6 +301,7 @@ export default function ATProductos() {
                         onChange={(e) => setActivo(e.target.checked)}
                       />
                       <span>Activo</span>
+                      <HelpTip text="Solo los productos activos aparecen en el punto de venta. Desactívelo para retirarlo del catálogo sin borrar su historial." />
                     </label>
                   </div>
                 </div>
