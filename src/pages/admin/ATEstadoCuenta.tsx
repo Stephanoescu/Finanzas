@@ -8,11 +8,14 @@ import {
   calcularTED,
   calcularTEM,
   calcularTCEATransaccion,
+  calcularLineaDisponible,
+  AYUDA_LINEA_DISPONIBLE,
   formatearMoneda,
   formatearTasa,
   redondear,
 } from '../../utils/financeUtils';
 import { CuotaCronograma, Transaccion, Pago } from '../../types/models';
+import HelpTip from '../../components/HelpTip';
 import {
   FileText, AlertTriangle, CheckCircle, Clock,
   ChevronDown, ChevronUp, User, Calendar, TrendingUp
@@ -91,11 +94,13 @@ export default function ATEstadoCuenta() {
   const activas = transaccionesConMora.filter(
     ({ tx }) => tx.estado !== 'liquidado' && tx.estado !== 'castigado'
   );
-  const totalCapitalGlobal = activas.reduce((s, t) => s + t.totalCapital, 0);
   const totalInteresGlobal = activas.reduce((s, t) => s + t.totalInteres, 0);
-  const lineaDisponible = cliente
-    ? cliente.limiteCredito - totalDeudaGlobal
-    : 0;
+  // F9: solo el capital pendiente consume línea (misma función que el punto de venta)
+  const linea = cliente
+    ? calcularLineaDisponible(cliente, transacciones)
+    : { utilizado: 0, disponible: 0 };
+  const lineaDisponible = linea.disponible;
+  const usoLinea = cliente && cliente.limiteCredito > 0 ? linea.utilizado / cliente.limiteCredito : 0;
 
   const toggleExpand = (txId: string) => {
     setExpandedTx((prev) =>
@@ -195,8 +200,8 @@ export default function ATEstadoCuenta() {
               <p className="stat-value text-money">{fm(cliente.limiteCredito)}</p>
             </div>
             <div className="stat-card">
-              <p className="stat-label">Deuda Total</p>
-              <p className="stat-value text-money text-danger-700">{fm(totalDeudaGlobal)}</p>
+              <p className="stat-label">Línea utilizada (capital)</p>
+              <p className="stat-value text-money text-danger-700">{fm(linea.utilizado)}</p>
             </div>
             <div className="stat-card">
               <p className="stat-label">Mora Acumulada</p>
@@ -204,8 +209,8 @@ export default function ATEstadoCuenta() {
                 {fm(totalMoraGlobal)}
               </p>
             </div>
-            <div className="stat-card">
-              <p className="stat-label">Línea Disponible</p>
+            <div className="stat-card" data-testid="linea-disponible">
+              <p className="stat-label">Línea disponible<HelpTip text={AYUDA_LINEA_DISPONIBLE} /></p>
               <p className={`stat-value text-money ${lineaDisponible < 0 ? 'text-danger-700' : 'text-success-700'}`}>
                 {fm(Math.max(0, lineaDisponible))}
               </p>
@@ -216,7 +221,7 @@ export default function ATEstadoCuenta() {
           <div className="card p-4 text-sm space-y-1">
             <div className="flex justify-between">
               <span className="text-gray-600">Capital pendiente</span>
-              <span className="text-money">{fm(totalCapitalGlobal)}</span>
+              <span className="text-money">{fm(linea.utilizado)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">Interés compensatorio</span>
@@ -235,22 +240,22 @@ export default function ATEstadoCuenta() {
           {/* Barra de utilización */}
           <div className="card p-4">
             <div className="flex justify-between text-sm mb-1">
-              <span className="text-gray-600">Utilización de línea</span>
+              <span className="text-gray-600">Utilización de línea (capital)</span>
               <span className="font-medium">
-                {((totalDeudaGlobal / cliente.limiteCredito) * 100).toFixed(1)}%
+                {(usoLinea * 100).toFixed(1)}%
               </span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-3">
               <div
                 className={`h-3 rounded-full transition-all ${
-                  totalDeudaGlobal / cliente.limiteCredito > 0.9
+                  usoLinea > 0.9
                     ? 'bg-danger-500'
-                    : totalDeudaGlobal / cliente.limiteCredito > 0.7
+                    : usoLinea > 0.7
                     ? 'bg-warning-500'
                     : 'bg-primary-500'
                 }`}
                 style={{
-                  width: `${Math.min(100, (totalDeudaGlobal / cliente.limiteCredito) * 100)}%`,
+                  width: `${Math.min(100, usoLinea * 100)}%`,
                 }}
               />
             </div>
