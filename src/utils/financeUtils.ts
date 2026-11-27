@@ -13,7 +13,7 @@
 //
 // ============================================================
 
-import type { TipoTasa, CuotaCronograma, ModalidadPago, Moneda } from '../types/models';
+import type { TipoTasa, CuotaCronograma, ModalidadPago, Moneda, Cliente, Transaccion } from '../types/models';
 import { addMonths, differenceInDays, format, parseISO, startOfDay } from 'date-fns';
 
 /** Formato ISO en hora local (sin zona), estable entre husos horarios. */
@@ -555,19 +555,49 @@ export function formatearTasa(tasa: number, decimales = 7): string {
   return `${(tasa * 100).toFixed(decimales)}%`;
 }
 
+/** Texto de ayuda común junto a "Línea disponible" en todas las pantallas. */
+export const AYUDA_LINEA_DISPONIBLE =
+  'Línea de crédito menos el capital pendiente. Los intereses y la mora no consumen línea.';
+
+/** Datos mínimos de una transacción para calcular la línea utilizada. */
+type TransaccionLinea = Pick<Transaccion, 'clienteId' | 'estado'> & {
+  cronograma: Pick<CuotaCronograma, 'estado' | 'capital'>[];
+};
+
 /**
- * Calcula el saldo utilizado total de un cliente
- * sumando los saldos pendientes de capital de todas sus transacciones vigentes.
+ * Línea utilizada (F9): Σ capital pendiente de amortizar de los créditos no
+ * liquidados ni castigados. Suma la columna "capital" (amortización) de las
+ * cuotas no pagadas; en cuotas el cronograma amortiza C′ (monto + gracia
+ * capitalizada), en pago único amortiza el monto de la compra.
+ * Intereses compensatorios y mora NO consumen línea.
  */
-export function calcularSaldoUtilizado(
-  cronogramas: CuotaCronograma[][]
-): number {
-  return cronogramas.reduce((totalCredito, cronograma) => {
-    const saldoPendiente = cronograma
-      .filter((c) => c.estado !== 'pagada')
-      .reduce((sum, c) => sum + c.capital, 0);
-    return totalCredito + saldoPendiente;
-  }, 0);
+export function calcularCapitalPendiente(transacciones: TransaccionLinea[]): number {
+  const total = transacciones
+    .filter((t) => t.estado !== 'liquidado' && t.estado !== 'castigado')
+    .reduce(
+      (sum, t) =>
+        sum +
+        t.cronograma
+          .filter((c) => c.estado !== 'pagada')
+          .reduce((s, c) => s + c.capital, 0),
+      0
+    );
+  return redondear(total);
+}
+
+/**
+ * Línea disponible (F9) = Línea de crédito − capital pendiente del cliente.
+ * Solo considera las transacciones del cliente indicado. Puede ser negativa
+ * si la línea se redujo por debajo de lo ya utilizado.
+ */
+export function calcularLineaDisponible(
+  cliente: Pick<Cliente, 'id' | 'limiteCredito'>,
+  transacciones: TransaccionLinea[]
+): { utilizado: number; disponible: number } {
+  const utilizado = calcularCapitalPendiente(
+    transacciones.filter((t) => t.clienteId === cliente.id)
+  );
+  return { utilizado, disponible: redondear(cliente.limiteCredito - utilizado) };
 }
 
 /**
